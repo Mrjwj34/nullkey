@@ -124,8 +124,36 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: black-box acceptance (implemented assertions)
-        run: go test -tags acceptance -count=1 -timeout 15m ./test/acceptance
+      - name: black-box acceptance (strict)
+        run: NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 -timeout 15m ./test/acceptance
+
+      - name: release suite compiles
+        run: go test -tags 'acceptance release' -run '^$' ./test/acceptance
+
+  coverage:
+    name: coverage (>=90%)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test coverage gate
+        run: make coverage
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: coverage.out
+          if-no-files-found: ignore
 
   contract:
     name: OpenAPI contract

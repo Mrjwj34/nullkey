@@ -67,6 +67,9 @@ const (
 	AuthAPIKey AuthType = "api_key"
 	AuthOAuth  AuthType = "oauth"
 	AuthPAT    AuthType = "pat"
+	AuthBearer AuthType = "bearer"
+	AuthHeader AuthType = "header"
+	AuthBasic  AuthType = "basic"
 	AuthNone   AuthType = "none"
 )
 
@@ -179,18 +182,23 @@ type Credential struct {
 	Fingerprint     string           `json:"fingerprint"`
 	Status          CredentialStatus `json:"status"`
 	KeychainAccount string           `json:"-"`
+	BaseURL         string           `json:"-"`
+	HeaderName      string           `json:"-"`
 	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`
 	CreatedAt       time.Time        `json:"created_at"`
 	LastUsedAt      *time.Time       `json:"last_used_at,omitempty"`
 }
 
-// MCPConnection is a host-side MCP server binding.
+// MCPConnection is a host-side MCP server binding. SandboxID is bound on first
+// use so a connection cannot be replayed from another sandbox.
 type MCPConnection struct {
 	ID           string    `json:"id"`
 	ServerID     string    `json:"server_id"`
 	Label        string    `json:"label"`
 	Status       string    `json:"status"`
 	CredentialID *string   `json:"credential_id,omitempty"`
+	SandboxID    string    `json:"-"`
+	ConfigJSON   string    `json:"-"`
 	Tools        []string  `json:"tools,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -206,6 +214,10 @@ type Service struct {
 	HealthPath string        `json:"-"`
 	WebSocket  bool          `json:"websocket"`
 	Status     ServiceStatus `json:"status"`
+	Command    []string      `json:"-"`
+	Ports      []int         `json:"-"`
+	AuthToken  string        `json:"-"`
+	CreatedAt  time.Time     `json:"-"`
 }
 
 // AuditEvent is an append-only kernel event. Detail must already be redacted.
@@ -305,4 +317,23 @@ type ServiceTicket struct {
 	Ticket    string    `json:"ticket"`
 	ServiceID string    `json:"service_id"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Sentinel errors shared by services and adapters. HTTP code mapping lives in
+// internal/core.
+var (
+	ErrStateLocked  = errSentinel("state is locked by an active sandbox")
+	ErrNotFound     = errSentinel("not found")
+	ErrUnauthorized = errSentinel("unauthorized")
+	ErrConflict     = errSentinel("conflict")
+)
+
+type errSentinel string
+
+func (e errSentinel) Error() string { return string(e) }
+
+// ImportResult is returned after importing a host login.
+type ImportResult struct {
+	CredentialID string `json:"credential_id"`
+	Status       string `json:"status"`
 }

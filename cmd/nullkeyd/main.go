@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/Mrjwj34/nullkey/internal/kernel"
+	"github.com/Mrjwj34/nullkey/internal/runtime/native"
 	"github.com/Mrjwj34/nullkey/internal/version"
 )
 
@@ -25,6 +26,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "__sandbox_exec" {
+		os.Exit(native.RunSandboxHelper(os.Args[2:]))
+	}
 	cfg, err := kernel.DefaultConfig()
 	if err != nil {
 		return err
@@ -32,6 +36,8 @@ func run() error {
 
 	var showVersion bool
 	flag.StringVar(&cfg.Listen, "listen", cfg.Listen, "control-plane listen address (loopback only)")
+	flag.StringVar(&cfg.GatewayListen, "gateway-listen", cfg.GatewayListen, "sandbox gateway listen address (loopback only)")
+	flag.StringVar(&cfg.ProxyListen, "proxy-listen", cfg.ProxyListen, "egress proxy listen address (loopback only)")
 	flag.StringVar(&cfg.Home, "home", cfg.Home, "Nullkey home directory (workspace/state/cache/token)")
 	flag.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level: debug, info, warn, error")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")

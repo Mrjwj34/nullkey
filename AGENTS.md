@@ -75,15 +75,16 @@ make test-race            # go test -race ./...
 make build                # bin/nullkeyd
 make run                  # 本地启动 nullkeyd
 make contract             # OpenAPI ↔ 路由契约
-make acceptance-ci        # 非严格验收（未实现项 skip）
-make acceptance           # 严格验收（未实现项失败，里程碑 gate）
+make acceptance-ci        # 非严格验收（当前无 pending，等价严格）
+make acceptance           # 严格验收（任何失败都阻断）
 make acceptance-compile   # 只编译验收代码
 make release-compile      # 编译 release 套件（-tags acceptance release）
 make release-product      # release-only：产品能力断言
-make release-slo          # release-only：SLO gate（P9 前预期失败）
+make release-slo          # release-only：SLO gate（严格）
+make coverage             # 全局 Go 覆盖率门禁（≥90%）
 ```
 
-普通 PR CI 并行跑 static/build/unit/acceptance/contract，不跑 product/SLO。
+普通 PR CI 并行跑 static/build/unit/acceptance/coverage/contract，不跑 product/SLO；覆盖率必须 ≥90%。
 发布 GitHub Release 时 `.github/workflows/release.yml` 才运行 product 与 SLO gate；
 不要把 release-only 断言塞回 PR CI。
 
@@ -119,7 +120,7 @@ NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
 
 - 新增/修改端点：先改 `docs/08-api-contract.md` 与 `api/openapi.yaml`，再改
   `internal/api/routes.go`，最后 `make contract`。
-- 未实现端点返回 `501 not_implemented`，不要返回伪造成功。
+- 端点必须真实实现，不要返回伪造成功；`desktop` 是唯一允许长期 `501 desktop_unavailable` 的端点。
 - 每个响应带 `X-Request-Id`；错误严格用 `{error:{code,message,details?,request_id}}`。
 - `POST` 支持 `Idempotency-Key`；分页用 `{items,next_cursor}`。
 - `/oauth/callback` 是浏览器回调，免 daemon token；用一次性 `state` 防伪。
@@ -202,22 +203,33 @@ NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
 - 文件 API 只读；canonicalize + symlink 解析后仍须在 workspace 内。
 - 不把宿主服务注册进 sandbox registry；Host Tool Gateway 是 v1.1，不在 v1 实现。
 
-## 11. 当前状态（P0）
+## 11. 当前状态（P0–P9 已实现）
 
 已实现：
 
-- `nullkeyd` 启动/优雅关闭；loopback 校验；token 装载（env 或 0600 文件）。
-- `/api/v1/health`、`/api/v1/capabilities`。
-- daemon bearer 认证、request id、错误 envelope、CORS、访问日志、panic recover。
-- OpenAPI 53 条 path+method 的路由骨架；未实现端点 501（含 job/OAuth cancel）。
-- OpenAPI 契约测试、验收 harness/基线断言、CI。
+- `nullkeyd` 三平面：control API（49152）、gateway（49153）、egress proxy（49154），全部只绑 loopback。
+- SQLite（WAL + immediate tx）持久化 workspace/state/sandbox/lock/credential/MCP/service/job/oauth-flow/audit/idempotency。
+- native runtime：Seatbelt（cgo `sandbox_init`，失败关闭）、PTY、进程组、SIGWINCH、优雅停止、重启对账。
+- terminal：一次性 ticket、WS `ready`/`terminal_id`、单写连接、`terminal_replaced`、无 scrollback。
+- credentials：macOS Keychain（cgo Security.framework，无 argv）、加密文件 CI fallback、只返回 fingerprint。
+- gateway：模型（OpenAI/Anthropic/Codex）、MCP（JSON-RPC/SSE/tool allowlist）、GitHub smart HTTP；流式转发。
+- OAuth：PKCE、callback、取消/迟到回调互斥、refresh、宿主导入。
+- egress：CONNECT/HTTP、三档模式、allowlist、SSRF 拒绝、拒绝审计。
+- services：manifest 依赖拓扑、端口范围、健康检查、重启、停止顺序、生成 token。
+- tunnel：声明服务、一次性 ticket、cookie session、HTTP/WS/SSE、Origin/路径重写。
+- artifacts：只读列表/预览/diff，canonicalize + symlink 防逃逸，1MiB 截断。
+- audit/SSE/redaction、scan（仅 generated_runtime）、SLO 基线。
 
-未实现：
+未实现/明确不做：
 
-- 所有资源 CRUD、SQLite、runtime/Seatbelt/PTY、credentials/Keychain、
-  gateway、OAuth、MCP、egress、service supervisor、tunnel、artifacts、SLO。
-- Host Tool Gateway/Terraform（v1.1）明确不做。
-- 不要在没有对应 AC 的情况下「顺手」实现这些；按 [P1..P9](docs/11-kernel-implementation-plan.md#12-里程碑) 推进。
+- Host Tool Gateway/Terraform（v1.1）。
+- desktop runtime（稳定返回 `501 desktop_unavailable`）。
+
+测试门禁：
+
+- 普通 PR CI：static/build/unit/acceptance（严格）/coverage（≥90%）/OpenAPI contract。
+- Release CI：`TestProduct_*` + `TestSLO_*`。
+- 本地：`make check`、`make acceptance`、`make release-check`。
 
 ## 12. 完成定义
 

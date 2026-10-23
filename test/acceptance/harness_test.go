@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,52 +23,95 @@ import (
 )
 
 type daemon struct {
-	baseURL string
-	token   string
-	home    string
-	cmd     *exec.Cmd
-	logs    *safeBuffer
-	waitCh  chan error
-	client  *http.Client
+	baseURL     string
+	gatewayURL  string
+	proxyURL    string
+	gatewayAddr string
+	proxyAddr   string
+	token       string
+	home        string
+	cmd         *exec.Cmd
+	logs        *safeBuffer
+	waitCh      chan error
+	exited      chan struct{}
+	client      *http.Client
 }
 
 func startDaemon(t *testing.T) *daemon {
+	t.Helper()
+	return startDaemonWithEnv(t, nil)
+}
+
+// startDaemonWithEnv starts a real daemon with deterministic test backends.
+// extra is merged after the defaults and may override them (for OAuth/MCP
+// stubs and egress allowlists).
+func startDaemonWithEnv(t *testing.T, extra map[string]string) *daemon {
+	t.Helper()
+	return startDaemonWithHome(t, t.TempDir(), extra)
+}
+
+// startDaemonWithHome restarts a daemon on the same home directory. It is used
+// for crash-recovery assertions; tokens from the previous process must fail.
+func startDaemonWithHome(t *testing.T, home string, extra map[string]string) *daemon {
 	t.Helper()
 	if daemonBinary == "" {
 		t.Fatal("acceptance: daemon binary was not built")
 	}
 	port := freePort(t)
-	home := t.TempDir()
+	gatewayPort := freePort(t)
+	proxyPort := freePort(t)
+	hostImport := filepath.Join(home, "host-import")
+	if err := os.MkdirAll(hostImport, 0o700); err != nil {
+		t.Fatalf("create host import dir: %v", err)
+	}
 	token, err := nkid.Random(32)
 	if err != nil {
 		t.Fatalf("generate test token: %v", err)
+	}
+
+	env := map[string]string{
+		"NULLKEY_HOME":                  home,
+		"NULLKEY_LISTEN":                "127.0.0.1:" + strconv.Itoa(port),
+		"NULLKEY_GATEWAY_LISTEN":        "127.0.0.1:" + strconv.Itoa(gatewayPort),
+		"NULLKEY_PROXY_LISTEN":          "127.0.0.1:" + strconv.Itoa(proxyPort),
+		"NULLKEY_DAEMON_TOKEN":          token,
+		"NULLKEY_LOG_LEVEL":             "debug",
+		"NULLKEY_SECRET_BACKEND":        "file",
+		"NULLKEY_HOST_IMPORT_ROOT":      hostImport,
+		"NULLKEY_DEFAULT_NETWORK_MODE":  "filtered",
+		"NULLKEY_EGRESS_ALLOWLIST":      "localhost,127.0.0.1,example.com,api.openai.com,github.com",
+		"NULLKEY_EGRESS_ALLOW_LOOPBACK": "1",
+	}
+	for key, value := range extra {
+		env[key] = value
 	}
 
 	cmd := exec.Command(daemonBinary)
 	logs := &safeBuffer{}
 	cmd.Stdout = logs
 	cmd.Stderr = logs
-	cmd.Env = cleanEnv(map[string]string{
-		"NULLKEY_HOME":         home,
-		"NULLKEY_LISTEN":       "127.0.0.1:" + strconv.Itoa(port),
-		"NULLKEY_DAEMON_TOKEN": token,
-		"NULLKEY_LOG_LEVEL":    "debug",
-	})
+	cmd.Env = cleanEnv(env)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}
 
 	d := &daemon{
-		baseURL: "http://127.0.0.1:" + strconv.Itoa(port) + "/api/v1",
-		token:   token,
-		home:    home,
-		cmd:     cmd,
-		logs:    logs,
-		waitCh:  make(chan error, 1),
-		client:  &http.Client{Timeout: 5 * time.Second},
+		baseURL:     "http://127.0.0.1:" + strconv.Itoa(port) + "/api/v1",
+		gatewayURL:  "http://127.0.0.1:" + strconv.Itoa(gatewayPort),
+		proxyURL:    "http://127.0.0.1:" + strconv.Itoa(proxyPort),
+		gatewayAddr: "127.0.0.1:" + strconv.Itoa(gatewayPort),
+		proxyAddr:   "127.0.0.1:" + strconv.Itoa(proxyPort),
+		token:       token,
+		home:        home,
+		cmd:         cmd,
+		logs:        logs,
+		waitCh:      make(chan error, 1),
+		exited:      make(chan struct{}),
+		client:      &http.Client{Timeout: 10 * time.Second},
 	}
 	go func() {
 		d.waitCh <- cmd.Wait()
+		close(d.exited)
 	}()
 	t.Cleanup(d.terminate)
 	d.waitHealthy(t)
@@ -98,12 +142,33 @@ func (d *daemon) terminate() {
 	if d.cmd == nil || d.cmd.Process == nil {
 		return
 	}
+	select {
+	case <-d.exited:
+		return
+	default:
+	}
 	_ = d.cmd.Process.Signal(syscall.SIGTERM)
 	select {
-	case <-d.waitCh:
+	case <-d.exited:
 	case <-time.After(3 * time.Second):
 		_ = d.cmd.Process.Kill()
-		<-d.waitCh
+		select {
+		case <-d.exited:
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func (d *daemon) crash(t *testing.T) {
+	t.Helper()
+	if d.cmd == nil || d.cmd.Process == nil {
+		t.Fatal("daemon has no process")
+	}
+	_ = d.cmd.Process.Kill()
+	select {
+	case <-d.exited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon did not exit after SIGKILL")
 	}
 }
 

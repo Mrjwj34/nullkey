@@ -67,10 +67,10 @@ func TestAC_API_002_Auth(t *testing.T) {
 		t.Fatalf("public health status = %d, want 200; body=%s", resp.StatusCode, raw)
 	}
 
-	// OAuth callback is public but not implemented in P0; it must not be 401.
+	// OAuth callback is public; an invalid state is a 400, never a 401.
 	resp, raw = d.do(t, http.MethodGet, "/oauth/callback?code=x&state=y", nil, nil)
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("public callback status = %d, want 501; body=%s", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("public callback status = %d, want 400; body=%s", resp.StatusCode, raw)
 	}
 }
 
@@ -161,14 +161,19 @@ func TestAC_API_006_LoopbackCORS(t *testing.T) {
 	}
 }
 
-func TestAC_API_007_UnimplementedExplicit(t *testing.T) {
+func TestAC_API_007_ImplementedNoFake501(t *testing.T) {
 	d := startDaemon(t)
 	resp, raw := d.doAuthed(t, http.MethodGet, "/sandboxes", nil)
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501; body=%s", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, raw)
 	}
-	env := decodeJSON[apiError](t, raw)
-	if env.Error.Code != "not_implemented" {
-		t.Fatalf("code = %q, want not_implemented", env.Error.Code)
+	var list struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("decode list: %v; body=%s", err, raw)
+	}
+	if list.Items == nil {
+		t.Fatalf("items must be an array, not null: %s", raw)
 	}
 }
