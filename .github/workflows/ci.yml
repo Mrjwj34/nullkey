@@ -1,0 +1,94 @@
+name: ci
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint / build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go mod tidy (must be clean)
+        run: go mod tidy -diff
+
+      - name: build linux
+        run: go build -trimpath ./cmd/...
+
+      - name: build darwin/arm64
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+        run: go build -trimpath ./cmd/...
+
+      - name: compile acceptance suite
+        run: go test -tags acceptance -run '^$' ./test/acceptance
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: unit tests (race)
+        run: go test -race -count=1 ./...
+
+      - name: black-box acceptance (implemented assertions)
+        run: go test -tags acceptance -count=1 -timeout 15m ./test/acceptance
+
+  contract:
+    name: OpenAPI contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: routes match api/openapi.yaml
+        run: go test -count=1 -v ./internal/contract
