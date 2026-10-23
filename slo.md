@@ -23,6 +23,10 @@
 | S13 | 3 个 Codex sandbox 总内存 | < 1.5GB | 含 daemon |
 | S14 | 无凭证扫描 | 100% 0 命中 | 硬指标；架构保证 |
 | S15 | 会话无崩溃率 | > 99% | MVP 目标；崩溃不丢 workspace |
+| S16 | 隧道 RTT（本机） | p95 < 20ms | WebUI/preview |
+| S17 | 隧道吞吐 | > 50MB/s | 本机 |
+| S18 | 并发 WebSocket/SSE | ≥ 8 条/沙箱 | |
+| S19 | 文件列表（10k） | p95 < 300ms | Artifacts |
 
 > S5/S6 受 harness 版本影响；发布前用固定版本测。S14 不是"测出来的"，是"凭证从未进入沙箱"的构造保证。
 
@@ -80,4 +84,5 @@ dd if=/dev/zero of=workspace/test.bin bs=1m count=512
 - [ ] S11 达标
 - [ ] S13 达标
 - [ ] S14 在演示沙箱为 0
+- [ ] S16/S17 达标（如交付 tunnel）
 - [ ] SLO 结果写入发布记录

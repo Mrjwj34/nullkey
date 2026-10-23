@@ -144,6 +144,25 @@
 - 默认不需要 Xvfb/noVNC。
 - 桌面 app/虚拟桌面需要可选 desktop runtime，单独计量。
 
+## ADR-016 · 宿主 → 沙箱 ingress 服务隧道
+
+**Context**：DSH 等 harness 只有 WebUI；虚拟桌面太重；Agent 产物需要一个可审查的入口。  
+**Decision**：Tunnel Proxy 只绑 `127.0.0.1`，只转发 adapter 声明过的 service；一次性 ticket；支持 HTTP/WebSocket/SSE；不做任意端口转发。  
+**Consequences**：
+
+- WebUI-only harness 可用；TUI 默认路径不变。
+- 需要处理 Origin/CSRF、cookie 作用域、ticket 过期、审计。
+- 不提供公网分享/VPN/端口扫描。
+
+## ADR-017 · Artifacts 只读审查
+
+**Decision**：workspace 文件树、文本/图片预览、git diff 通过只读 API 暴露；路径 canonicalize 到 workspace；不在审查 API 里写文件。  
+**Consequences**：
+
+- GUI 可审查 Agent 产物；写操作仍走 harness。
+- 二进制/大文件只给元数据/下载。
+- 内容不进入模型 prompt。
+
 ## 已确认的产品决策
 
 | # | 问题 | 决策 |

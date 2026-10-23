@@ -16,6 +16,7 @@
 - 本地 GUI，默认页面是 **SSH-client 风格的 Terminal**，里面跑 harness 自己的 TUI；虚拟桌面是独立标签/窗口，按需打开。
 - 用户选择 harness：Codex（Must）、Claude Code / DSH（Should）。
 - 允许从 catalog 下载额外支持的桌面端（Codex app 等），但桌面 runtime 是可选后端。
+- WebUI-only harness（DSH 等）通过宿主侧 service tunnel 打开；Agent 产物在 Artifacts 页审查。
 - Harness/app 不随安装包分发：宿主侧下载、固定版本/哈希、缓存/只读安装。
 - 凭证全局管理：OAuth（宿主侧 broker）或 API key；所有沙箱共用。
 - 状态默认持久化：workspace、harness state、cache 可跨沙箱共享（见 [07](07-state-and-mounts.md)）。
@@ -33,6 +34,7 @@
 | 6 | 状态 | workspace / state / cache **持久化 + 可共享** | 方便继续进度、复用登录/缓存 |
 | 7 | 网络 | `offline` / `filtered`（默认）/ `open` | 断网局限太大；认证流量走 gateway 即可 |
 | 8 | GUI | **不在本设计范围**；后端冻结 API 契约 | App 选型由独立团队负责 |
+| 9 | 服务隧道 | 宿主 → 沙箱 ingress，只暴露声明服务，一次性 ticket | 让 WebUI-only harness 可用；产物可审查 |
 
 ## 5. OAuth
 
@@ -74,6 +76,8 @@ OAuth 是 v1 的核心能力：
 | Home | harness/app 卡片、最近 workspace | 安装、启动、继续 |
 | Terminal | 默认页；SSH-client 风格，里面跑 harness TUI | 输入、复制、全屏 |
 | Desktop | 可选虚拟桌面（独立窗口） | 打开/关闭、分辨率 |
+| Services | 沙箱内声明的 WebUI/preview | 打开隧道 URL、健康状态 |
+| Artifacts | workspace 文件树、预览、diff | 审查 Agent 产物 |
 | Workspaces | workspace 列表、挂载模式、清理 | 新建、共享、只读挂载 |
 | Credentials | OAuth 连接 + API key | 登录、测试、撤销；**永不显示明文** |
 | MCP | catalog + 连接 | 连接、OAuth、启用/禁用 |
@@ -98,6 +102,7 @@ OAuth 是 v1 的核心能力：
 - Claude Code / DSH。
 - MCP OAuth（DCR）。
 - 可选 desktop runtime + Codex app。
+- Service tunnel + Artifacts 审查。
 - 第二个 MCP（Slack/Notion）。
 - 状态共享的只读模式、快照/回滚。
 
@@ -128,7 +133,7 @@ OAuth 是 v1 的核心能力：
 - 2 个 MCP 可用，配置零敏感信息。
 - 3 分钟演示不翻车。
 
-详细指标见 [slo.md](../slo.md)。
+详细指标见 [slo.md](../slo.md)；服务隧道见 [09](09-service-tunnel.md)。
 
 ## 11. 已确认决策
 

@@ -62,13 +62,14 @@
 | 6 | workspace/state | 整个项目目录/会话目录被复制 | 真实 key 从未写入；OAuth token 只在 Keychain | 无 key |
 | 7 | 崩溃转储 | core dump 捕获进程内存 | 沙箱内只有 token；禁用 core dump | 无 |
 | 8 | 桌面/截图/剪贴板 | 用户截到配置、复制 env | 配置里只有 token；剪贴板默认关闭 | 用户主动导出 token |
-| 9 | 导出文件 | 用户把 `~/.claude` 打包 | 只有 token；停止即失效 | 无 key |
+| 9 | 导出文件 | 用户把 state/workspace 打包 | 只有 token；停止即失效 | 无 key |
 | 10 | 宿主日志 | daemon 打印 Authorization | 统一 redaction；不记录 body | 实现 bug 风险 |
 | 11 | MCP server 日志 | 第三方 server 打印 header | server 在宿主；stderr 重定向 + redaction；不挂进沙箱 | 第三方自身日志 |
 | 12 | 模型上下文 | key 被写进 prompt | 沙箱里没有 key；网关不把 key 放进响应 | 无 |
 | 13 | 多沙箱共享 | 一个沙箱的 token 被另一个用 | token 绑定 sandbox；网关校验 | 同一沙箱内共享 |
 | 14 | 用户粘贴 | 用户把 key 发进聊天 | UI 提示"不要在对话里粘贴 key"；不承诺阻止 | 用户行为 |
 | 15 | 沙箱网络外发 | 未认证流量经 proxy；认证流量经 gateway | egress allowlist + 日志；`open` 模式警告 | 数据外泄不在范围 |
+| 16 | 服务隧道暴露 | WebUI 被 LAN/其他应用访问 | 只绑 127.0.0.1；只声明服务；一次性 ticket；Origin 校验 | cookie 仍可能被本机其他进程读取 |
 
 ## 6. 安全保证
 
@@ -81,6 +82,7 @@
 | **G5** | 撤销 key 后，所有沙箱的下一次调用失败 | 撤销 + 调用 → 失败 |
 | **G6** | 宿主日志/审计不含 key 明文 | 日志扫描 + 单测 |
 | **G7** | 即使拿到完整 workspace/state 目录，也拿不到 key/OAuth token | 导出目录 + 扫描 |
+| **G8** | 服务隧道只暴露声明服务，只绑 loopback，ticket 一次性 | 端口探测 + 未声明服务访问 → 404 |
 
 > G1/G7 是"由构造保证"的：key 从来没有被传给沙箱。扫描是验证手段，不是唯一防线。
 

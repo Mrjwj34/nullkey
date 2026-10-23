@@ -4,7 +4,7 @@
 
 ## 1. 结论
 
-1. **"沙箱里只有占位符/token，真实凭证在沙箱外注入"是成熟模式**：microsandbox、E2B、Envoy 都有实现；我们不需要发明代理机制。
+1. **"沙箱里只有占位符/token，真实凭证在沙箱外注入"是成熟模式**：microsandbox、E2B、Envoy 都有实现；不需要发明代理机制。
 2. **默认 runtime 选原生 macOS 进程沙箱（Seatbelt），不选 VM**：Codex/Claude Code/DSH 都有 macOS 原生二进制；VM 的启动/内存代价与"轻量"目标冲突。
 3. **网络与凭证正交**：互联网经 egress proxy，认证经 gateway；不需要为了安全把沙箱做成断网。
 4. **OAuth 是一等公民**：Codex 开源、可做宿主 OAuth；MCP 用 OAuth 2.1 + DCR；Slack/Notion 等预注册 app 逐步接入。
@@ -55,7 +55,7 @@
 | Colima + Docker | Colima MIT / Docker Apache-2.0 | VM + 容器 | 10–30s / 数百 MB | 可 | 太重，不选 |
 | Docker Desktop | 商业 | VM + 容器 | 同上 | 可 | 许可 + 重，不选 |
 | microVM（microsandbox 等） | Apache-2.0 | microVM | 快 / 中 | 社区方案 | 可选 desktop 后端 |
-| Apple `container` | Apache-2.0 | microVM | 快 / 中 | 无 | 观察；可选 desktop |
+| Apple `container` | Apache-2.0 | microVM | 快 / 中 | 无 | 可选 desktop 首选（macOS 26+） |
 | E2B | Apache-2.0 | Firecracker | 云/自托管重 | ✅ | 长期/云端 |
 
 **选择 Seatbelt 的理由**：
@@ -101,6 +101,7 @@
 5. **终端页优先**：GUI 默认是 SSH-client 风格终端，里面跑 harness 自己的 TUI；不是 GUI 采用 TUI 风格。
 6. **状态持久化**：workspace/state/cache 默认保留，方便继续进度。
 7. **OAuth 先做 Codex/MCP DCR**：不要为了"全 provider"拖垮三天。
+8. **ingress 隧道**：类似 `ssh -L` 的本机转发，但只暴露声明服务 + ticket；让 WebUI-only harness 可用，也方便审查产物。
 
 ## 7. 参考
 

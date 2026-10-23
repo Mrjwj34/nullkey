@@ -40,6 +40,8 @@
 | `reauth_required` | 401 | OAuth 过期/撤销 |
 | `runtime_unavailable` | 503 | native runtime 启动失败 |
 | `desktop_unavailable` | 501 | 未启用 desktop runtime |
+| `service_not_found` | 404 | 服务未声明/未启动 |
+| `ticket_invalid` | 401 | 隧道 ticket 过期/复用 |
 | `network_denied` | 403 | egress 规则拒绝 |
 | `job_failed` | 500 | 安装/OAuth/构建失败 |
 | `internal` | 500 | 未分类 |
@@ -59,6 +61,8 @@ GET /capabilities
   "runtimes": ["native"],
   "desktop_available": false,
   "network_modes": ["offline", "filtered", "open"],
+  "tunnel": true,
+  "artifacts": true,
   "oauth_providers": ["codex", "github"],
   "mcp_servers": ["github", "filesystem"]
 }
@@ -152,6 +156,22 @@ POST /workspaces/{id}/reset
 { "confirm": true }
 → 200 { "ok": true }
 ```
+
+产物审查（只读）：
+
+```http
+GET /workspaces/{id}/files?path=src/
+→ 200 { "items": [{ "name": "main.ts", "type": "file", "size": 1234, "mtime": "..." }] }
+
+GET /workspaces/{id}/file?path=src/main.ts
+→ 200 { "content": "...", "encoding": "utf-8", "truncated": false, "mime": "text/plain" }
+
+GET /workspaces/{id}/diff
+→ 200 { "patch": "diff --git ...", "files": [...] }
+```
+
+- 路径必须 canonicalize 到 workspace；拒绝 symlink 逃逸。
+- 只读；写操作走 harness。
 
 ### 3.5 States
 
@@ -277,7 +297,33 @@ POST /sandboxes/{id}/desktop
 - 打开桌面可能触发桌面 runtime 启动；进度走 SSE。
 - 桌面只绑 127.0.0.1；ticket 一次性。
 
-### 3.9 Stats / SLO
+### 3.9 Services / WebUI
+
+```http
+GET /sandboxes/{id}/services
+→ 200 { "items": [{
+  "id": "dsh-web",
+  "name": "DSH WebUI",
+  "protocol": "http",
+  "status": "ready|starting|error",
+  "websocket": true
+}]}
+```
+
+```http
+POST /sandboxes/{id}/services/{service_id}/ticket
+→ 200 {
+  "url": "http://127.0.0.1:49123/s/<ticket>/",
+  "expires_at": "...",
+  "service_id": "dsh-web"
+}
+```
+
+- 隧道只绑 `127.0.0.1`；ticket 一次性/60s。
+- 支持 HTTP、WebSocket、SSE。
+- 只暴露声明过的服务；没有任意端口转发。
+
+### 3.10 Stats / SLO
 
 ```http
 GET /sandboxes/{id}/stats
@@ -292,7 +338,7 @@ GET /sandboxes/{id}/stats
 }
 ```
 
-### 3.10 无凭证扫描
+### 3.11 无凭证扫描
 
 ```http
 POST /sandboxes/{id}/scan
@@ -310,7 +356,7 @@ POST /sandboxes/{id}/scan
 
 > 扫描是启发式验证；保证来自架构（凭证从未进入沙箱）。
 
-### 3.11 Credentials
+### 3.12 Credentials
 
 ```http
 GET /providers
@@ -353,7 +399,7 @@ DELETE /credentials/{id}
 - `value` 只在请求体中出现；daemon 写 Keychain，不落日志。
 - GUI 永不显示明文；列表只返回 fingerprint。
 
-### 3.12 OAuth
+### 3.13 OAuth
 
 ```http
 GET /oauth/providers
@@ -418,7 +464,7 @@ POST /oauth/import
 → 201 { "credential_id": "cred_123", "status": "connected" }
 ```
 
-### 3.13 MCP
+### 3.14 MCP
 
 ```http
 GET /mcp/catalog
@@ -457,7 +503,7 @@ DELETE /mcp/connections/{id}
 → 204
 ```
 
-### 3.14 Audit / events
+### 3.15 Audit / events
 
 ```http
 GET /audit?limit=50&cursor=...&type=sandbox.start
@@ -485,6 +531,12 @@ data: {"flow_id":"flow_123","status":"succeeded"}
 
 event: network.block
 data: {"sandbox_id":"sbx_456","host":"evil.example","reason":"not_allowlisted"}
+
+event: service.opened
+data: {"sandbox_id":"sbx_456","service_id":"dsh-web"}
+
+event: service.closed
+data: {"sandbox_id":"sbx_456","service_id":"dsh-web"}
 ```
 
 ## 4. 生命周期与状态机

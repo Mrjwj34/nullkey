@@ -114,4 +114,5 @@
 - `POST /sandboxes` `{harness_id, workspace_id, state_id?, mounts?}`
 - `GET /workspaces/{id}` 返回 `last_sandbox_id`、`size_bytes`、`locked_by`
 - `POST /workspaces/{id}/reset`、`POST /states/{id}/reset`
-- 详见 [08-api-contract.md](08-api-contract.md)。
+- 产物审查（文件树/预览/diff）与服务隧道见 [09-service-tunnel.md](09-service-tunnel.md)。
+- 完整 API 见 [08-api-contract.md](08-api-contract.md)。

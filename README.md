@@ -17,6 +17,7 @@ Nullkey 把沙箱变成 **zero-secret zone**：
 - 真实凭证只在宿主机：macOS Keychain + Nullkey daemon。
 - 模型调用、MCP 调用、私有 git 都经过宿主侧 gateway，由 gateway 在沙箱外注入凭证。
 - 沙箱默认走 `filtered` 网络：未认证流量经 egress proxy，认证流量经 gateway。
+- 宿主机可通过 **service tunnel** 打开沙箱内 WebUI/preview；Agent 产物在 Artifacts 页审查。
 
 **即使整个沙箱状态被拿走，也拿不到真实凭证。**
 
@@ -125,6 +126,7 @@ token 不进入 sandbox
 | Auth | **OAuth Broker** + API key | Codex OAuth 优先；MCP OAuth DCR；其他 provider 逐步 |
 | Network | `offline` / `filtered`（默认）/ `open` | egress proxy；认证走 gateway |
 | State | 持久化 + 共享 | workspace / state / cache 三类 |
+| Services | WebUI/preview 隧道 | 只暴露声明服务；一次性 ticket |
 
 ## SLO
 
@@ -141,6 +143,7 @@ token 不进入 sandbox
 - [06 · 决策记录](docs/06-decisions.md)
 - [07 · 状态、文件挂载与持久化](docs/07-state-and-mounts.md)
 - [08 · API 契约](docs/08-api-contract.md)
+- [09 · 服务隧道与产物审查](docs/09-service-tunnel.md)
 - [SLO](slo.md)
 
 ## 三天 MVP
@@ -153,7 +156,7 @@ Must：
 - 模型 gateway + 一个真实 MCP（GitHub）+ egress proxy。
 - 持久化 workspace；API 契约冻结；SLO 基线。
 
-Should：Claude Code / DSH、MCP OAuth DCR、桌面 runtime/Codex app、第二个 MCP。
+Should：Claude Code / DSH、MCP OAuth DCR、桌面 runtime/Codex app、Service tunnel + Artifacts、第二个 MCP。
 
 Won't：默认 VM、Windows/Linux host、多租户、完整桌面 catalog。
 

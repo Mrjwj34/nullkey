@@ -108,6 +108,8 @@ export ANTHROPIC_AUTH_TOKEN="<per-sandbox-token>"
 - 配置 OpenAI-compatible provider：`base_url = http://127.0.0.1:<gateway>/openai`，`api_key = <per-sandbox-token>`。
 - MCP 配置同上。
 - DSH 一般用 API key，没有订阅 OAuth 问题。
+- **只有 WebUI 时**：启动 `dsh web`（或等价命令）绑定 `127.0.0.1:<port>`；adapter 注册 service；GUI 通过 [service tunnel](09-service-tunnel.md) 打开。
+- WebUI 里的模型/MCP 仍走 gateway；页面里没有真实 key。
 
 ## 5. 桌面端 catalog（Should）
 

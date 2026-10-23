@@ -22,6 +22,7 @@
 - MCP OAuth（DCR）。
 - 私有 Git smart HTTP proxy。
 - 可选 desktop runtime + Codex app。
+- Service tunnel + Artifacts 审查。
 - 第二个 MCP（Slack/Notion）。
 - 状态只读共享、快照/回滚。
 
@@ -73,7 +74,7 @@
 
 | 时间 | A | B | C |
 |---|---|---|---|
-| 09:00–12:00 | Seatbelt 收紧、core dump、路径校验 | 审计导出、失败模式、OAuth 过期 | Claude/DSH 或 MCP OAuth（二选一）；SLO 复测 |
+| 09:00–12:00 | Seatbelt 收紧、core dump、路径校验 | 审计导出、失败模式、OAuth 过期 | Claude/DSH WebUI 或 MCP OAuth（二选一）；Service tunnel/Artifacts |
 | 12:00 | **Gate 3：Must 全过；SLO 达标；演示计时** | | |
 | 13:00–15:00 | 彩排 ×2、录屏 | 文档/API 契约 | 评审要点 |
 | 15:00–17:00 | Buffer | Buffer | Buffer |
@@ -103,7 +104,7 @@
 | 1:45 | 沙箱检查 | `env`、`cat ~/.codex/config.toml`、`grep -R "sk-"`：只有 token。 |
 | 2:00 | 持久化 | 停止 → 重启：workspace/state 还在；token 已轮换。 |
 | 2:15 | 撤销 | 撤销 Codex 凭证 → 下一次调用失败。 |
-| 2:30 | 扫描 | "扫描凭证" → 0 命中。 |
+| 2:30 | 扫描 | "扫描凭证" → 0 命中；Artifacts 打开 diff。 |
 | 2:40 | 架构 | key 在 Keychain，gateway 注入，沙箱只有 token。 |
 | 2:50 | 边界 | "不防 prompt injection；保证凭证不在沙箱。" |
 | 3:00 | 结束 | "Session 可以泄漏，key 不会。" |
@@ -125,7 +126,8 @@
 | OAuth provider 限制/条款 | 中 | 高 | Codex 优先；失败降级 API key/导入 |
 | MCP HTTP transport 不兼容 | 中 | 中 | stdio bridge；先 Filesystem |
 | 内存/启动不达标 | 低 | 中 | native 本身轻；先测 Codex RSS/启动 |
-| 时间不够 | 高 | 高 | 砍 Claude/DSH、Git proxy、desktop |
+| 时间不够 | 高 | 高 | 砍 Claude/DSH、Git proxy、desktop、service tunnel |
+| 隧道暴露面 | 中 | 中 | 只绑 loopback、只声明服务、一次性 ticket、Origin 校验 |
 
 ## 7. 验收清单
 
@@ -140,6 +142,8 @@
 - [ ] 审计无凭证明文；扫描 0。
 - [ ] SLO 基线达标（见 [slo.md](../slo.md)）。
 - [ ] API 契约与 GUI 对齐。
+- [ ] Service tunnel 能打开声明过的 WebUI；未声明端口不可达。
+- [ ] Artifacts 能看文件树/diff。
 
 ## 8. 交付物
 

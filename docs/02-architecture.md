@@ -15,6 +15,7 @@ flowchart LR
     ST[("Workspace / State / Cache")]
     TS["Terminal Service<br/>PTY + WebSocket"]
     DP["Desktop Proxy<br/>可选"]
+    TP["Service Tunnel<br/>ingress + ticket"]
 
     GUI --> D
     D --> KC
@@ -25,6 +26,7 @@ flowchart LR
     D --> ST
     D --> TS
     D --> DP
+    D --> TP
   end
 
   subgraph SBX["Native sandbox · 无 VM（Seatbelt）"]
@@ -36,6 +38,7 @@ flowchart LR
   H -->|"127.0.0.1: gateway"| D
   H -->|"127.0.0.1: proxy"| EP
   TS -->|"WebSocket"| GUI
+  TP -->|"127.0.0.1"| H
   MG -->|"real key / OAuth"| UP["模型 API"]
   MCPG -->|"real key"| MS["MCP Server<br/>宿主侧"]
   EP -->|"allowlist"| NET["Internet"]
@@ -54,6 +57,7 @@ flowchart LR
 | GUI | 宿主 | 终端页、桌面页、凭证/工作区/MCP 管理 | 不把凭证传给沙箱 |
 | `nullkeyd` | 宿主 | API、调度、配置渲染、审计、日志脱敏 | 不记录凭证 |
 | Terminal Service | 宿主 | PTY、WebSocket、resize、exit | 不解析终端内容 |
+| Service Tunnel | 宿主 | 宿主 → 沙箱 WebUI/preview；一次性 ticket | 不做任意端口转发 |
 | Runtime | 宿主 | 启动/停止 harness 进程，套 Seatbelt profile | 不挂宿主 home |
 | Keychain helper | 宿主 | 读写 macOS Keychain | 不走 argv 传 key |
 | Model Gateway | 宿主 | token → sandbox，注入 API key/OAuth，流式转发 | 不记录 body |
@@ -107,6 +111,7 @@ type Runtime interface {
     Exec(ctx context.Context, id string, argv []string) (ExecResult, error)
     Terminal(ctx context.Context, id string) (PTY, error)
     Desktop(ctx context.Context, id string) (DesktopEndpoint, error)
+    Services(ctx context.Context, id string) ([]Service, error)
     Stats(ctx context.Context, id string) (Stats, error)
 }
 ```
@@ -122,6 +127,14 @@ type Runtime interface {
 - Codex TUI 直接跑在 PTY 里；不需要虚拟桌面。
 - 桌面是独立 tab/window；打开时才创建 desktop runtime。
 - 终端内容不进入模型网关；只有 harness 自己发起的模型请求才走 gateway。
+
+### 5.1 Ingress 服务隧道
+
+- 宿主 GUI 通过 `127.0.0.1` 的 Tunnel Proxy 打开沙箱内 WebUI/preview。
+- 只转发 adapter 声明过的 service；一次性 ticket；只绑 loopback。
+- 支持 HTTP/WebSocket/SSE；不做任意端口转发。
+- 让 DSH 这类只有 WebUI 的 harness 可用；Agent 产物可在 Artifacts 页审查。
+- 详细设计见 [09-service-tunnel.md](09-service-tunnel.md)。
 
 ## 6. 凭证路径
 
@@ -231,6 +244,7 @@ states(id, harness_id, path, created_at, last_used_at)
 sandboxes(id, harness_id, workspace_id, state_id, runtime, network_mode, status, token_hash, pid, created_at)
 credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, oauth_status, expires_at)
 mcp_connections(id, server_id, label, auth_type, keychain_account, config_json, status)
+services(id, sandbox_id, name, target_host, target_port, protocol, status)
 audit_events(id, ts, sandbox_id, type, detail_json)
 ```
 
@@ -242,8 +256,9 @@ audit_events(id, ts, sandbox_id, type, detail_json)
 2. 生成 per-sandbox token；渲染配置（token 从 env 注入，不落配置文件）。
 3. 创建/复用 workspace、state、cache；加锁。
 4. 启动进程，套 Seatbelt profile；启动 PTY。
-5. 返回 terminal WebSocket ticket；可选 desktop ticket。
-6. 停止：撤销 token、停进程、释放锁；state/workspace 保留。
+5. 返回 terminal WebSocket ticket；可选 desktop/service ticket。
+6. adapter 注册 WebUI/preview service；daemon 健康检查。
+7. 停止：撤销 token、停进程、释放锁；state/workspace 保留。
 7. 删除：删除 sandbox 记录；用户可选删 state/workspace。
 
 ## 13. 失败模式
@@ -257,6 +272,8 @@ audit_events(id, ts, sandbox_id, type, detail_json)
 | workspace 被占用 | 409；提示只读挂载或等待 |
 | Seatbelt profile 失败 | 启动失败；不降级为无沙箱运行 |
 | desktop runtime 不可用 | TUI 正常；桌面按钮报错 |
+| service 未声明/未就绪 | 404 `service_not_found`；不猜测端口 |
+| tunnel ticket 过期 | 401 `ticket_invalid`；GUI 重新申请 |
 
 ## 14. 加固
 
@@ -268,7 +285,17 @@ audit_events(id, ts, sandbox_id, type, detail_json)
 - egress proxy allowlist；`open` 模式显式警告。
 - 私有 git 走 gateway；不把 PAT 写进 `.git/config`。
 
-## 15. 为什么不是 VM / 容器
+## 15. 选型结论
+
+| 层 | 选型 |
+|---|---|
+| 默认 sandbox | **macOS Seatbelt 进程沙箱**（无 VM） |
+| 可选桌面 | Apple `container`（microVM，首选）/ microsandbox（备选）；只在 Open Desktop 时启动 |
+| Harness | Codex 原生（Must）；Claude Code/DSH 原生（Should） |
+| 网络 | 宿主 egress proxy + gateway；无默认 VM 网络 |
+| 隧道 | 宿主 loopback ingress tunnel，仅声明服务 |
+
+## 16. 为什么不是 VM / 容器
 
 | 方案 | 为什么不选为默认 |
 |---|---|
