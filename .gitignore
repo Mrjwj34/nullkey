@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+.LSOverride
+
+# Local secrets / runtime state
+.env
+.env.*
+.nullkey/
+*.sqlite
+*.sqlite3
+*.log
+
+# Node / web
+node_modules/
+dist/
+build/
+.next/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Go
+bin/
+*.test
+
+# Packaging
+*.dmg
+*.pkg
+*.app/
