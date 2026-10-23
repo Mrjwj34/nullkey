@@ -99,7 +99,7 @@ DSH 这类只有 WebUI 的 harness：
 3. Adapter 注册 service `dsh-web`。
 4. 模型配置指向 `http://127.0.0.1:<gateway>/openai`；MCP 指向 gateway。
 5. GUI 打开 service tunnel URL → 直接用 DSH WebUI。
-6. 沙箱里仍然没有真实凭证。
+6. Nullkey 不向沙箱注入所管理的真实凭证；用户自带文件或输入不受此保证覆盖。
 
 这使 DSH 从"Should"变成"可以接"；是否进 v1 Must 取决于时间。
 

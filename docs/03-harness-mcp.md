@@ -1,6 +1,6 @@
 # 03 · Harness / MCP / OAuth 接入
 
-> 目标：**沙箱里的 harness 和 MCP 配置没有任何敏感信息。** 所有配置只含 localhost gateway URL + per-sandbox token。
+> 目标：**Nullkey 生成的 harness 和 MCP 配置不含其管理的真实凭证。** 认证只使用 localhost gateway URL + per-sandbox token；用户自带项目或配置不受此保证覆盖。
 
 ## 1. 支持矩阵
 
@@ -67,7 +67,7 @@ bearer_token_env_var = "NULLKEY_TOKEN"
 
 - `~/.codex` 映射到持久化 state 目录；token 不写入。
 - 停止沙箱保留 state；下次启动重新渲染配置、轮换 token。
-- 用户可一键重置 state。
+- 用户可明确确认后清除 state 内的配置/会话/历史；workspace 保留，活动任务使用中的 state 不可清理。
 
 ## 3. Claude Code（Should）
 
@@ -226,18 +226,18 @@ GUI: "Connect Codex/GitHub"
 - 不识别 proxy 的程序失败（fail closed）。
 - 浏览器登录 cookie 是凭证；v1 只建议公开浏览。
 
-## 9. "无敏感信息"检查清单
+## 9. 凭证注入检查清单
 
-每个 sandbox 启动后自动检查：
+每个 sandbox 启动后检查 Nullkey 生成的配置和环境；结果展示范围、排除项和时间，不对整个用户项目作“无秘密”结论：
 
 - [ ] `env` 只有 `NULLKEY_TOKEN`、`NULLKEY_GATEWAY`、`NULLKEY_PROXY`、禁用遥测开关。
 - [ ] `~/.codex/config.toml` / `~/.claude.json` 只有 gateway URL + token。
 - [ ] MCP 配置只有 gateway URL + token。
-- [ ] 没有 `~/.ssh`、`~/.aws`、`~/.config/gh`、`.env`。
+- [ ] Nullkey 不把宿主 `~/.ssh`、`~/.aws`、`~/.config/gh`、`.env` 复制到生成配置中；workspace 自带文件不在检查范围。
 - [ ] 没有宿主 home/Keychain 访问。
 - [ ] `git config` 没有真实 credential。
-- [ ] shell history 没有 key。
-- [ ] `grep -R` 已知 key 前缀无命中。
+- [ ] Nullkey 不向命令行或 shell history 写入所管理的真实 key。
+- [ ] 发布测试在无自带凭证的受控项目中检查导出文件，注册测试凭证无命中；不把此前缀扫描当作用户目录安全证明。
 
 ## 10. 兼容性测试
 

@@ -89,12 +89,12 @@
 
 - 未认证流量（包管理器、公开文档、公开 git）经 egress proxy；认证流量（模型/MCP/git）经 gateway。
 - 代理只做 CONNECT + host/SNI allowlist，不做 MITM、不装 CA。
-- 默认 `filtered`；`offline` 用于敏感仓库；`open` 用于长尾。
+- 默认 `filtered`；`services_only` 只关闭通用网页出口，模型/MCP/git 仍可联网；`open` 用于长尾。三档均不保证数据不外发。
 - 参考实现：Squid（成熟）或自写 Go CONNECT proxy。
 
 ## 6. 对设计的启示
 
-1. **凭证不进沙箱**：环境变量、配置、transcript、workspace 都不应该有。
+1. **Nullkey 管理的凭证不注入沙箱**：生成的环境变量和配置只用能力 token；用户 workspace 自带凭证不受保证覆盖。
 2. **认证走 gateway**：模型、MCP、私有 git 都走专用端点，不走通用代理。
 3. **网络可以放开**：包安装、文档、公开 git 是刚需；断网不是安全前提。
 4. **默认 native**：VM 太重；Seatbelt 足够覆盖 session 泄漏。
