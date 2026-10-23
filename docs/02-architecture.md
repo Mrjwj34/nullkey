@@ -128,6 +128,39 @@ Harness 永远看不到真实 key。
 - 模型白名单：sandbox 只能请求 GUI 里启用的模型。
 - 失败关闭：token 无效、key 缺失、上游 401 → 直接报错，不回退到直连。
 
+### 5.1.1 凭证类型与 provider registry
+
+| `auth_type` | 注入方式 | 典型 provider |
+|---|---|---|
+| `bearer` | `Authorization: Bearer <v>` | OpenAI、DeepSeek、OpenRouter、Groq、Mistral、xAI |
+| `header` | 自定义 header | Anthropic `x-api-key`、Azure OpenAI `api-key` |
+| `basic` | `Authorization: Basic` | 部分 MCP / 数据库 |
+| `query` | URL query | Gemini |
+| `sigv4` | AWS 签名 | Bedrock（v1.1） |
+| `service_account` | GCP JWT | Vertex（v1.1） |
+| `custom_header` | 用户指定 | 通用 endpoint |
+
+provider registry 条目：`id, kind(llm|mcp), base_url, auth_type, header_name, models, test_path`。
+
+网关适配器：
+
+- **OpenAI-compatible**：覆盖大多数模型 provider。
+- **Anthropic**：`x-api-key` + Anthropic 版本头。
+- **Gemini / Azure OpenAI**：各自 endpoint 与 header。
+- **Custom**：用户填 base URL + auth 类型 + header 名。
+
+v1 目标 8–10 个模型 provider；MCP 支持静态 token / header / connection string。
+
+### 5.1.2 OAuth
+
+v1 只做"导入宿主已有登录"，不做授权流程：
+
+- **Codex**：读取宿主 `~/.codex/auth.json`（用户授权）→ Keychain → 网关注入；刷新按 Codex 开源实现适配。
+- **Claude Code**：使用 `claude setup-token` 生成的长期 token，或导入宿主 Keychain 中已有的登录 → 网关注入；过期后重新导入。
+- 导入的 token 不进入沙箱；GUI 显示 `connected` / `expired`；过期返回 `reauth_required`。
+
+v1.1：完整宿主侧 broker（PKCE + localhost callback + refresh）与 MCP OAuth（动态客户端注册）。详见 [03-harness-mcp.md](03-harness-mcp.md#6-oauth)。
+
 ### 5.2 MCP 调用
 
 **宿主侧 MCP（有凭证）**：
@@ -215,7 +248,7 @@ Docker internal network: nullkey-net
 ## 9. 数据模型与 API
 
 ```sql
-credentials(id, provider, label, keychain_account, fingerprint, created_at, last_used_at, status)
+credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, base_url, header_name, oauth_status, oauth_expires_at, created_at, last_used_at, status)
 mcp_connections(id, server_id, label, auth_type, keychain_account, config_json, status)
 sandboxes(id, harness_id, status, token_hash, container_id, desktop_port, created_at, last_used_at)
 audit_events(id, ts, sandbox_id, type, detail_json)
@@ -230,7 +263,10 @@ API 草图：
 GET    /api/harnesses
 POST   /api/harnesses/:id/install
 GET    /api/credentials
-POST   /api/credentials              {provider,label,value}
+POST   /api/credentials              {provider_id,label,value,auth_type,base_url,header_name}
+GET    /api/credentials/importable
+POST   /api/credentials/import       {source}
+POST   /api/credentials/:id/reimport
 POST   /api/credentials/:id/test
 DELETE /api/credentials/:id
 

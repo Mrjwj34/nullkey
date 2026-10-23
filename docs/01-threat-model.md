@@ -12,7 +12,7 @@
 |---|---|---|
 | 模型 API key | Anthropic / OpenAI / DeepSeek 等 | macOS Keychain |
 | MCP 凭证 | GitHub token、Slack token、数据库密码等 | macOS Keychain |
-| OAuth token | v1 不支持；未来宿主侧保存 | macOS Keychain |
+| OAuth access/refresh token | 订阅登录导入（实验）；v1.1 完整 broker | macOS Keychain |
 | per-sandbox token | 沙箱访问网关的能力令牌，不是长期密钥 | 沙箱配置 + daemon 内存/哈希 |
 | 沙箱数据 | 代码、transcript、日志、桌面文件 | 沙箱卷；停止时默认删除 |
 | 宿主机 | Keychain、文件系统、网络 | 可信计算基（TCB） |
@@ -54,6 +54,7 @@
 | # | 向量 | 例子 | 对策 | 残余 |
 |---|---|---|---|---|
 | 1 | Harness transcript | `~/.claude/projects/*.jsonl`、`~/.codex/sessions` | 沙箱里只有 per-sandbox token | 无 key；token 可撤销 |
+| 1b | Harness 登录 token | Claude / Codex 的 OAuth token 存在宿主 | 只导入宿主 Keychain；网关注入；沙箱内从不登录 | 宿主存储；provider ToS |
 | 2 | 环境变量 / 进程参数 | `env`、`ps e`、`/proc/*/environ` | 只注入 `NULLKEY_TOKEN`；真实 key 不进入进程 | 无 |
 | 3 | Harness 配置 | `~/.claude.json`、`~/.codex/config.toml` | 配置里只有 gateway URL + token | 无 |
 | 4 | MCP 配置 | `mcpServers.*.env` 里的 token | MCP 配置只有 gateway URL + token；真实 server 在宿主 | 无 |
@@ -72,7 +73,7 @@
 
 | ID | 保证 | 验证方式 |
 |---|---|---|
-| **G1** | 沙箱文件系统、env、进程参数、transcript、配置中不存在任何已注册 key 的明文 | 沙箱内 `env`/`/proc`/`grep` + 配置检查 |
+| **G1** | 沙箱文件系统、env、进程参数、transcript、配置中不存在任何已注册 key/OAuth token 的明文 | 沙箱内 `env`/`/proc`/`grep` + 配置检查 |
 | **G2** | harness/MCP 配置只包含 per-sandbox token，不包含真实凭证 | 读取配置模板 + 渲染结果 |
 | **G3** | 沙箱没有互联网路由，也没有到 Keychain/宿主文件系统的路径；只能访问网关 | 网络探测 + 挂载检查 |
 | **G4** | 停止/删除沙箱会删除 home/transcript，并使 token 立即失效 | 停止后重放请求 → 401 |
@@ -85,7 +86,7 @@
 ## 7. 非保证
 
 - 不保证 Agent 不会做坏事；只保证它拿不到 key。
-- 不保证上游 API 不记录你的数据；只保证 key 不以明文出现在沙箱。
+- 不保证上游 API 不记录用户数据；只保证 key/OAuth token 不以明文出现在沙箱。
 - 不保证沙箱绝对无法逃逸；只保证默认没有宿主挂载、没有互联网、没有 Keychain。
 - 不保证用户不会自己把 key 贴进聊天或导出到不安全的地方。
 - 不保证 per-sandbox token 不被滥用；它是能力令牌，泄漏后可在 GUI 撤销。
@@ -98,7 +99,7 @@
 - 对模型输出做语义判断；
 - 持续的红队和策略调优。
 
-这些在 demo 里很难证明，而且会显著增加配置复杂度，违背"不能太技术化"的产品要求。
+这些在演示里很难证明，而且会显著增加配置复杂度，违背"不能太技术化"的产品要求。
 
 相反，**session 泄漏**是一个可以用架构直接消除的问题：只要 key 不在沙箱里，transcript/disk/log 泄漏都无效。这个断言可验证、可演示、对用户也好解释。
 
@@ -122,16 +123,12 @@
 
 > 注意：扫描是启发式验证，不能证明"绝对没有"。真正的保证是架构上 key 从未进入沙箱。
 
-## 10. 与"模型占位符"方案的关系
+## 10. 设计选择：透明网关与工具级能力引用
 
-你最初的思路是：在 Agent 上下文里注入特殊格式的占位符，工具调用时由我们替换。
+v1 采用**透明网关**，不要求模型理解任何占位符语法：
 
-在 v1 里，我们采用更"隐形"的做法：
+- **模型网关**：harness 使用 per-sandbox token 作为 API key；网关替换成真实 key。
+- **MCP 网关**：MCP 配置指向网关；真实 server 在宿主侧，凭据由网关注入。
+- 沙箱内的配置只有 gateway URL + token。
 
-- **模型网关**：harness 以为自己在用一个普通 API key（实际是 per-sandbox token），网关替换成真实 key。
-- **MCP 网关**：MCP 配置指向网关，真实 server 在宿主侧，凭据由网关注入。
-- 模型不需要知道任何占位符语法，也不需要配合。
-
-这对主流 harness/MCP 更友好，也更容易做到"零配置"。
-
-`cred://` 这类**工具调用级能力引用**仍然有价值，但它的场景是：agent 直接调用自定义工具/CLI，而工具需要 key 参数。那属于 v1.1 的扩展，不是 v1 的主路径。原因：主流 harness 的模型调用和 MCP 调用都可以用 base URL + token 透明代理解决，不需要模型学习特殊格式。
+**工具级能力引用**（例如 `cred://provider/account`）用于 Agent 直接调用自定义工具/CLI、且工具参数必须携带 key 的场景。它属于 v1.1 的扩展，不是 v1 的主路径：主流 harness 的模型调用和 MCP 调用都可以用 base URL + token 透明代理解决。v1 不要求模型学习特殊格式，也不需要模型配合。

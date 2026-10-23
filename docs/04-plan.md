@@ -7,7 +7,7 @@
 ### Must（不做完不上台）
 
 - 本地 GUI（React + daemon API）+ Colima/Docker 沙箱 + 虚拟桌面。
-- macOS Keychain 全局密钥：添加、测试、删除。
+- macOS Keychain 全局密钥：添加、测试、删除；provider registry 覆盖 8–10 个模型 provider + 通用 auth 类型。
 - 模型网关：per-sandbox token → 真实 key；Claude Code 跑通。
 - 宿主侧 MCP 网关 + GitHub MCP；沙箱配置零敏感信息。
 - 沙箱启动/停止/删除；token 撤销；桌面访问。
@@ -17,6 +17,7 @@
 ### Should
 
 - Codex、DSH 适配。
+- Codex/Claude 宿主登录导入（实验）。
 - Filesystem MCP（沙箱侧）+ Slack/Notion 之一。
 - Key 轮换、审计导出。
 - Tauri 外壳。
@@ -24,7 +25,7 @@
 
 ### Won't
 
-- OAuth 订阅登录。
+- 完整 OAuth 授权流程；沙箱内登录；MCP OAuth（v1.1）。
 - Windows / Linux host。
 - 多用户、公网访问。
 - microVM / 认证级强隔离。
@@ -38,7 +39,7 @@
 |---|---|---|
 | A · 平台/沙箱 | Colima/Docker、镜像、桌面、端口、生命周期 | `SandboxProvider`、镜像、noVNC 代理 |
 | B · 安全/网关 | Keychain、模型网关、MCP 网关、token、审计 | `nullkeyd` 核心、网关、redaction |
-| C · GUI/适配/演示 | React GUI、harness 适配、MCP 连接、demo | 页面、配置模板、演示脚本 |
+| C · GUI/适配/演示 | React GUI、harness 适配、MCP 连接、演示 | 页面、配置模板、演示脚本 |
 
 第 1 小时冻结接口：`SandboxProvider`、`/api/sandboxes`、token 格式、审计字段。
 
@@ -74,8 +75,8 @@
 | 时间 | A | B | C |
 |---|---|---|---|
 | 09:00–12:00 | 加固（只读、cap-drop、无挂载、core dump） | 审计导出、错误码、扫描脚本 | 红队检查、演示素材 |
-| 12:00 | **Gate 3：所有 Must 检查通过，demo 计时** | | |
-| 13:00–15:00 | 彩排 ×2、录屏 | 文档/README | 答辩要点 |
+| 12:00 | **Gate 3：所有 Must 检查通过，演示计时** | | |
+| 13:00–15:00 | 彩排 ×2、录屏 | 文档/README | 评审要点 |
 | 15:00–17:00 | Buffer | Buffer | Buffer |
 | 17:00–18:00 | 最终检查：一键、离线、备份视频 | | |
 | 18:00 | **M3** | | |
@@ -84,11 +85,11 @@
 
 | Gate | 时间 | 通过标准 | 不通过 |
 |---|---|---|---|
-| G1 沙箱 | D1 12:00 | 桌面可见；无外网；无宿主挂载 | 换 Docker Desktop/Webtop 镜像；不要死磕 Colima |
+| G1 沙箱 | D1 12:00 | 桌面可见；无外网；无宿主挂载 | 换 Docker Desktop/Webtop 镜像；Colima 2 小时不通即切换 |
 | G2 MCP | D2 12:00 | Claude Code 通过网关调用 GitHub；配置只有 token | 先做 Filesystem MCP（无凭证），GitHub 放 Should |
 | G3 演示 | D3 12:00 | Must 全过；3 分钟不超时 | 砍 Codex/DSH，保 Claude Code + GitHub + 扫描 |
 
-**底座不要赌**：Colima 网络 2 小时不通就换 Docker Desktop（如果已安装）；`SandboxProvider` 保证切换成本低。
+**底座以可交付为先**：Colima 网络 2 小时不通即切换 Docker Desktop（如果已安装）；`SandboxProvider` 保证切换成本低。
 
 ## 5. 演示脚本（3 分钟）
 
@@ -122,10 +123,10 @@
 | arm64 桌面镜像难搞 | 中 | 高 | 自建 Debian + Xfce + noVNC；或先用 headless + 截图 |
 | Claude Code 配置字段变化 | 中 | 中 | 固定版本；适配器 smoke test；降级到 `ANTHROPIC_BASE_URL` |
 | MCP HTTP transport 不兼容 | 中 | 中 | 用 stdio bridge；先做 Filesystem |
-| OAuth 用户强需求 | 中 | 高 | 明确 v1 只支持 API key；OAuth 放 v1.1 |
+| OAuth 范围膨胀 | 高 | 高 | v1 只做广谱 key + 可选导入；完整流程放 v1.1 |
 | 模型/网络延迟 | 中 | 中 | 预热、缓存、录屏 |
 | 时间不够 | 高 | 高 | 砍 Codex/DSH/Slack；保 Claude Code + GitHub + 扫描 |
-| 评委问"能防注入吗" | 高 | 中 | 明确边界：不防；我们解决 session 泄漏 |
+| 评审问"能防注入吗" | 高 | 中 | 明确边界：不防；产品解决 session 泄漏 |
 
 ## 7. 验收清单
 
@@ -148,4 +149,4 @@
 - README + docs/。
 - 3 分钟演示视频 + 离线备份。
 - 红队/检查报告（截图）。
-- 答辩 PPT（问题、边界、架构、演示、路线图）。
+- 评审 PPT（问题、边界、架构、演示、路线图）。

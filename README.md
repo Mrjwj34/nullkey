@@ -8,7 +8,7 @@
 
 ## 为什么需要它
 
-Agent session 会以很多方式离开你的电脑：transcript、调试日志、环境变量、MCP 配置、磁盘镜像、崩溃转储、共享桌面、导出的文件。只要真实 key 在沙箱里，任何一次 session 泄漏都可能变成 key 泄漏。
+Agent session 会以很多方式离开本机：transcript、调试日志、环境变量、MCP 配置、磁盘镜像、崩溃转储、共享桌面、导出的文件。只要真实 key 在沙箱里，任何一次 session 泄漏都可能变成 key 泄漏。
 
 Nullkey 把沙箱变成 **zero-secret zone**：
 
@@ -18,7 +18,7 @@ Nullkey 把沙箱变成 **zero-secret zone**：
 - 模型请求和 MCP 调用都经过宿主侧网关，由网关在沙箱外注入真实凭证。
 - 沙箱默认没有互联网，只能访问网关。
 
-**即使整个沙箱磁盘/transcript 被拿走，也拿不到你的 key。**
+**即使整个沙箱磁盘/transcript 被拿走，也拿不到真实 key。**
 
 ## 怎么工作
 
@@ -105,10 +105,23 @@ Harness → http://gateway/mcp/github
 
 | 类别 | v1 | 说明 |
 |---|---|---|
-| Harness | Claude Code、Codex、DSH | 通过 base URL + per-sandbox token 接入；API key 模式 |
+| Harness | Claude Code、Codex、DSH | 通过 base URL + per-sandbox token 接入；API key 为主，订阅登录可实验性导入 |
 | MCP | GitHub、Slack、Notion、Postgres；Filesystem | 有凭证的在宿主侧，凭据由网关注入；Filesystem 在沙箱侧（无凭证）；v1 先做 2–3 个 |
 | Host | macOS Apple Silicon | 后续 Linux / Windows |
-| Auth | API key / gateway token | **OAuth 订阅登录（Claude Pro / ChatGPT Plus）不在 v1** |
+| Auth | API key/token 广谱支持；OAuth 宿主登录导入（实验） | 不做完整 OAuth 授权流程；详见 [03](docs/03-harness-mcp.md#6-oauth) |
+
+## 凭证支持
+
+v1 的目标是"常用 key 都能放进来"，不是"只支持两家"。
+
+| 类型 | v1 支持 |
+|---|---|
+| 模型 API key | Anthropic、OpenAI、DeepSeek、Google Gemini、OpenRouter、Groq、Mistral、xAI、Azure OpenAI、Ollama/LM Studio（无 key）、任意 OpenAI-compatible endpoint |
+| MCP token | GitHub PAT、Slack bot token、Notion integration token、Linear/Sentry API key、Postgres connection string、通用 Bearer/Header |
+| 认证方式 | Bearer、x-api-key、api-key header、Basic、query、custom header |
+| OAuth | **v1 不做完整授权流程**；提供实验性"导入宿主已有登录"（Codex 优先；Claude Code 支持 setup-token/Keychain 导入）。完整宿主侧 OAuth broker + MCP OAuth 放 v1.1 |
+
+为什么 OAuth 不放进 Must：完整 OAuth 要处理浏览器回调、PKCE、动态客户端注册、刷新、provider ToS；Claude Code 闭源，Codex 虽开源但把订阅 token 用在第三方网关有条款风险。详见 [03 · Harness 与 MCP 接入](docs/03-harness-mcp.md#6-oauth)。
 
 ## 文档
 

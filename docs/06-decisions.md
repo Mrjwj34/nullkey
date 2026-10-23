@@ -16,7 +16,7 @@
 
 - 设计更简单：不需要 HITL、目的地 allowlist 作为安全控制。
 - 可以更专注地做"零密钥 + 隔离 + 可验证"。
-- 答辩时必须主动说明边界，避免被问穿。
+- 文档与演示必须主动说明边界。
 
 ## ADR-003 · 透明网关优先于模型占位符
 
@@ -58,15 +58,21 @@
 - 一个沙箱 token 泄漏只影响该沙箱生命周期；不是长期 key 泄漏。
 - v1.1 再做按 harness/MCP 的 scope。
 
-## ADR-007 · v1 不支持 OAuth 订阅登录
+## ADR-007 · v1 不做完整 OAuth，做广谱静态凭证 + 宿主登录导入
 
-**Context**：Claude Pro / ChatGPT Plus 用户多，但 OAuth token 会落在沙箱，违反 zero-secret；宿主侧 OAuth 刷新复杂。  
-**Decision**：v1 只支持 API key / gateway token；OAuth 放 v1.1，做宿主侧 broker。  
+**Context**：Claude Pro / ChatGPT Plus 用户多，但 OAuth token 会落在沙箱，违反 zero-secret；完整宿主侧 OAuth 需要 PKCE、回调、刷新、多账号，且 Claude Code 闭源、provider 条款存在不确定性。  
+**Decision**：
+
+- v1 支持广谱 API key/token（8–10 个模型 provider + 通用 auth 类型）。
+- v1 **不实现完整 OAuth 授权流程**。
+- v1 提供实验性"导入宿主已有登录"：Codex 读 `~/.codex/auth.json`；Claude Code 用 `setup-token` 或 Keychain 导入。
+- v1.1 做完整宿主侧 OAuth broker + MCP OAuth（DCR）。
+
 **Consequences**：
 
-- 部分用户/评委可能失望；必须在 README 和产品页明确。
-- API key 模式可以先证明安全链路。
-- v1.1 需要处理浏览器回调、刷新、多账号、provider 限制。
+- 订阅用户可以"导入"已有登录，但不保证自动刷新/所有版本。
+- 必须在 README 和产品页明确"实验性"与 API key 的差异。
+- v1.1 需要处理浏览器回调、刷新、多账号、provider 限制与条款。
 
 ## ADR-008 · 本地 Web GUI 优先
 
@@ -98,11 +104,31 @@
 - 需要维护 harness 版本清单和适配器。
 - 不自动升级；用户确认后切换。
 
+## ADR-011 · Provider registry + 通用 auth 适配器
+
+**Context**：用户希望"密钥支持尽可能全面"，但逐个写 provider 适配器不可持续。  
+**Decision**：用 provider registry 描述 `base_url / auth_type / header_name / models`；网关只实现少量 auth 适配器（bearer、header、basic、query、custom）；OpenAI-compatible 覆盖大多数模型 provider。  
+**Consequences**：
+
+- 新增 provider 主要是配置，不是代码。
+- SigV4（Bedrock）、Service Account（Vertex）需要额外签名适配器，放 v1.1。
+- 自定义 endpoint 让用户覆盖长尾 provider。
+
+## ADR-012 · 登录只发生在宿主，沙箱内不登录
+
+**Context**：任何在沙箱内完成的登录都会把 OAuth token 写进沙箱文件/Keychain，直接违反 zero-secret。  
+**Decision**：harness/MCP 的登录、导入、刷新都在宿主完成；沙箱只拿 per-sandbox token。  
+**Consequences**：
+
+- 沙箱内不出现登录页、不出现 OAuth token。
+- 需要处理"宿主已登录/未登录"的状态显示与重新导入。
+- 对不支持 API key 的 harness，v1 只能依赖导入或暂不支持。
+
 ## 开放问题
 
 | # | 问题 | 影响 | 建议 |
 |---|---|---|---|
-| 1 | OAuth 是否必须进 v1？ | 高 | 先按 API key 做；如果评委强需求，砍 Codex/DSH，换宿主侧 OAuth |
+| 1 | OAuth 是否必须进 v1？ | 高 | v1 做广谱 key + 可选导入；若评审明确要求完整流程，砍 Codex/DSH 换单 provider OAuth |
 | 2 | GUI 是否必须原生 `.app`？ | 中 | v1 本地 Web；Tauri 放 v1.1 |
 | 3 | 停止后 workspace 保留多久？ | 中 | 默认保留 workspace、删除 home；GUI 可选"全删" |
 | 4 | 是否承诺 Windows/Linux 时间表？ | 中 | 只承诺 `SandboxProvider` 接口；不承诺日期 |

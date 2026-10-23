@@ -52,6 +52,19 @@
 | [MCP Security Best Practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices) | confused deputy、token passthrough | 宿主侧网关防 confused deputy |
 | [The lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) | 私有数据 + 不可信内容 + 外发 = 泄漏 | 我们明确不解决这一段；只解决 key 泄漏 |
 
+### 2.5 OAuth 的复杂度
+
+| 场景 | 现状 | 结论 |
+|---|---|---|
+| Claude Code 订阅登录 | 闭源；官方文档提供 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` 的网关接法；OAuth 登录/刷新没有第三方文档 | v1 用 API key；订阅用户可导入 `setup-token` 或宿主已有登录 |
+| Codex 订阅登录 | 开源（Apache-2.0），`codex login` 的客户端 ID/刷新流程可从源码看；token 落在 `~/.codex/auth.json` | 技术上可做宿主导入+刷新；仍有 provider 条款风险 |
+| MCP OAuth | MCP 规范定义 OAuth 2.1 + 动态客户端注册；实现要处理 metadata 发现、PKCE、DCR、401 重授权 | 通用 client 可做；Slack/Notion 需要预注册 app，v1 不做 |
+| 企业 SSO/OIDC | 需要 IdP 配置、多租户 | 不在 v1 |
+
+**结论**：完整 OAuth 是 3–5 天的独立子项目；v1 做"广谱静态 key + 宿主登录导入（实验）"，完整流程放 v1.1。
+
+参考：[Claude Code LLM gateway](https://code.claude.com/docs/en/llm-gateway-connect) · [Codex repo](https://github.com/openai/codex) · [MCP client registration](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization/client-registration)
+
 ## 3. 底座对比
 
 | 方案 | License | 隔离 | 现成桌面 | 三天适配 | 结论 |
@@ -70,7 +83,7 @@
 - 本机已装 Docker 29.4.1、Colima 0.10.1、Lima 2.1.1；没有 Apple `container`。
 - Docker daemon 跑在 Ubuntu 24.04 aarch64 的 VM 里。
 - Colima 的 VM 边界 + Docker 容器隔离，对"session 泄漏"这个威胁模型足够；对"恶意 Agent 逃逸"不宣称强隔离。
-- 如果评委要求 microVM，v0.2 用 microsandbox / Apple `container`；接口已经留好。
+- 如果评审要求 microVM，v0.2 用 microsandbox / Apple `container`；接口已经留好。
 
 ## 4. 选型理由
 
@@ -99,7 +112,7 @@
 3. **有凭证的 MCP 必须宿主侧运行**：MCP server 自己需要 token，放沙箱就破功。
 4. **默认断网**：沙箱只留 gateway 一条路；这比"允许上网 + 代理"简单得多。
 5. **per-sandbox token**：可撤销、可审计、不是长期密钥；泄漏影响有限。
-6. **OAuth 是产品缺口**：订阅用户多，但 v1 只能 API key；要提前和用户/评委说清楚。
+6. **OAuth 是产品缺口**：订阅用户多，v1 以 API key 为主、订阅登录只做实验性导入；需要在文档和产品页明确。
 7. **不要过度承诺**：prompt injection、恶意 Agent、上游劫持都不在范围；把"session 泄漏"讲透。
 8. **验证方式要硬**：导出整个沙箱 home/镜像，扫描无 key；这比任何架构图都有说服力。
 

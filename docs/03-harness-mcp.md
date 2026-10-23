@@ -12,6 +12,35 @@
 
 > 具体字段以各 harness 当前版本为准；实现时用固定版本 + smoke test 固化。下表给出的是"注入点"，不是最终 CLI 参数。
 
+### 1.1 登录模式
+
+| Harness | API key | 宿主登录导入（v1 实验） | 完整 OAuth |
+|---|---|---|---|
+| **Claude Code** | ✅ `ANTHROPIC_AUTH_TOKEN` | ✅ `claude setup-token` / Keychain 导入 | ❌ v1.1 |
+| **Codex** | ✅ `env_key` | ✅ `~/.codex/auth.json` 导入 | ❌ v1.1 |
+| **DSH** | ✅ | n/a | ❌ |
+
+原则：**登录只发生在宿主，token 只进 Keychain，网关注入；沙箱内不发起登录。**
+
+### 1.2 模型 provider 矩阵（v1）
+
+| Provider | auth_type | 备注 |
+|---|---|---|
+| Anthropic | `header` (`x-api-key`) | Claude API |
+| OpenAI | `bearer` | 标准 |
+| DeepSeek | `bearer` | 标准 |
+| Google Gemini | `query` | API key 在 query |
+| OpenRouter | `bearer` | 聚合 |
+| Groq | `bearer` | 标准 |
+| Mistral | `bearer` | 标准 |
+| xAI | `bearer` | 标准 |
+| Azure OpenAI | `header` (`api-key`) | 需要 endpoint + deployment |
+| Ollama / LM Studio | 无 | 本地 endpoint |
+| Custom | `bearer` / `header` | 任意 OpenAI-compatible |
+
+AWS Bedrock（SigV4）与 Google Vertex（service account）放 v1.1。
+
+
 ## 2. Claude Code
 
 ### 安装（宿主侧）
@@ -72,7 +101,7 @@ export ANTHROPIC_AUTH_TOKEN="<per-sandbox-token>"
 
 ### OAuth
 
-Claude Code 的订阅登录会在 `~/.claude` 写 OAuth token。**v1 不支持在沙箱里登录**；只支持 API key / gateway 模式。宿主侧 OAuth 见第 6 节。
+Claude Code 的订阅登录会在 `~/.claude` 写 OAuth token。**v1 不支持在沙箱里登录**；支持 API key / gateway 模式，订阅登录可通过宿主导入（见第 6 节）。
 
 ## 3. Codex
 
@@ -190,30 +219,58 @@ sandbox: nullkey-mcp-bridge
 - 可以静态编译，放进只读镜像。
 - 超时/重连/错误码要可观测。
 
-## 6. OAuth（v1.1）
+## 6. OAuth
 
-### 为什么 v1 不做
+### 6.1 v1：只做宿主登录导入
 
-- Claude Code / Codex 的订阅登录会在沙箱里写 OAuth token；这直接违反 zero-secret。
-- 宿主侧 OAuth 需要：浏览器回调、token 刷新、provider 特定 header、过期处理；三天做不扎实。
-- API key 模式已经能覆盖"开发者用 API 计费"的场景。
+v1 不实现 OAuth 授权流程，只提供"导入宿主已有登录"（实验性）：
 
-### v1.1 设计草案
+| Harness | 导入来源 | v1 行为 |
+|---|---|---|
+| Codex | `~/.codex/auth.json` | 用户授权后读取 → Keychain；网关注入；按开源实现刷新 |
+| Claude Code | `claude setup-token` 或宿主 Keychain | 导入长期 token；过期后重新导入；不保证自动刷新 |
+| DSH | 无 | 使用 API key |
+
+UI：
+
+- Keys 页面显示"导入宿主登录"（仅 macOS，检测到已安装/已登录的 CLI 时可用）。
+- 导入后显示 `Connected` / `Expired`，不显示 token。
+- 沙箱内永远不出现登录页。
+
+### 6.2 为什么 v1 不做完整流程
+
+- **工作量**：浏览器回调、PKCE、状态校验、动态客户端注册、刷新、多账号，至少 3–5 天。
+- **闭源**：Claude Code 闭源，OAuth 端点/刷新行为没有第三方文档；只能依赖 `setup-token` 或导入已存 token。
+- **条款**：Codex 虽开源（Apache-2.0），但把 ChatGPT 订阅 token 用于第三方网关可能违反 provider 条款；需要用户自行确认。
+- **MCP**：Slack/Notion 等需要注册 OAuth app；GitHub 可用 PAT。v1 用静态 token 更稳。
+
+### 6.3 v1.1：完整宿主侧 broker
 
 ```text
-GUI: "Sign in with Claude" → 宿主浏览器 OAuth
-  → token 存 Keychain
-  → Gateway 用 OAuth token 注入上游
-  → 到期前用 refresh token 刷新
+GUI: "Sign in with ..." → 宿主浏览器 OAuth（PKCE + state）
+  → localhost callback
+  → access/refresh token 存 Keychain
+  → Gateway 注入；到期前刷新
   → 沙箱里仍然只有 per-sandbox token
 ```
 
-风险：
+MCP OAuth：
 
-- provider 可能限制第三方客户端/网关；
-- OAuth token 的 scope 可能比 API key 大；
-- 刷新失败要让用户重新登录；
-- 需要处理多账号。
+- 支持动态客户端注册（DCR）的 server，用通用 OAuth client。
+- 需要预注册 app 的 server（Slack/Notion），逐个适配。
+- 处理 401 → 重新授权；scope 最小化。
+
+### 6.4 时间估算
+
+| 工作 | 预估 |
+|---|---|
+| 广谱静态 key + 通用 auth 类型 | 0.5–1 天 |
+| Codex 宿主登录导入 + 刷新 | 1–1.5 天 |
+| Claude Code token 导入 | 0.5–1 天 |
+| 完整 OAuth 授权流程（单 provider） | 2–3 天 |
+| MCP OAuth（DCR） | 1–2 天 |
+
+结论：v1 做"广谱静态 key + 可选导入"，完整 OAuth 放 v1.1；否则三天的主线（沙箱 + 网关 + 零密钥）会被挤掉。
 
 ## 7. "无敏感信息"检查清单
 

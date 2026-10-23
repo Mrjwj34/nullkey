@@ -11,46 +11,63 @@
 - 愿意把 key 填进一个本地 GUI，但不愿意把 key 放进 agent 的会话、配置或磁盘。
 - 用 macOS Apple Silicon，重视"一键"和"看得见的桌面"。
 
-## 3. 产品形态（按你的描述）
+## 3. 产品形态
 
-- 基础形态是 GUI；先只支持 Apple M，但选型不绑死 macOS。
-- 用户进入页面，选择要启动的 harness（Claude Code / Codex / DSH 等）。
-- Harness 不随二进制打包，按需下载。
-- 点击启动 → 创建一个沙箱；agent 的操作被隔离在沙箱内。
-- GUI 支持配置全局密钥，初版所有沙箱共用。
-- 允许连接到沙箱的虚拟桌面。
+- 本地 GUI：先支持 macOS Apple Silicon，架构不绑定 macOS。
+- 用户选择要启动的 harness（Claude Code / Codex / DSH 等）。
+- Harness 不随 Nullkey 安装包分发，按需下载。
+- 点击启动后创建沙箱；Agent 的读写、网络、桌面操作都限制在沙箱内。
+- GUI 统一管理全局密钥；v1 所有沙箱共用一组 key。
+- 浏览器内可打开沙箱虚拟桌面。
+- 所有 harness/MCP 配置由 GUI 自动生成，用户不需要编辑 YAML 或填写密钥。
 
-## 4. 建议的收敛
+## 4. 关键设计取舍
 
-大方向不需要改。下面 7 条是为了三天内能交付、且不把"安全"做成口号：
+以下取舍决定 v1 的边界：
 
-| # | 你的设定 | 建议 | 原因 |
+| # | 设计点 | 最终方案 | 理由 |
 |---|---|---|---|
-| 1 | Harness 按需下载 | **宿主侧下载 + 固定版本/哈希 + 只读挂载**，不要在沙箱里下载 | 沙箱内下载会把供应链和网络暴露带进来；每次启动都下载也慢 |
-| 2 | GUI 配置全局密钥 | 保留；但每个沙箱生成 **独立 per-sandbox token**，可单独撤销、单独审计 | 全局 key 是"能力共享"，不是"密钥共享"；泄漏一个 sandbox token 不应影响其他沙箱 |
-| 3 | 连接虚拟桌面 | 保留；noVNC **只绑 127.0.0.1**，一次性 ticket；剪贴板/文件传输默认关闭 | 桌面是最大的"人工带出"通道，默认收敛 |
-| 4 | 所有主流 MCP 零敏感信息 | **宿主侧 MCP Gateway + 精选 catalog**；v1 先做 2–3 个 | "所有"是路线图，不是 v1 承诺；架构可以泛化，但适配器要逐个做 |
-| 5 | 沙箱严格隔离 | 增加一条：**沙箱默认无互联网，只能访问网关** | 这是最强的"session 泄漏"防线，也简化了网络策略 |
-| 6 | 主流 harness | v1 先保证 **Claude Code** 跑通；Codex / DSH 作为 Should | 三个 harness 的配置注入都能做，但联调时间要留够 |
-| 7 | GUI | **本地 Web GUI 优先**（daemon 提供页面），Tauri 外壳放 v1.1 | 三天内把时间花在安全链路，不花在签名/打包/WebView 兼容 |
+| 1 | Harness 分发 | 宿主侧下载 + 固定版本/哈希 + 只读挂载；沙箱内不下载 | 避免供应链与网络暴露；启动更快、可复现 |
+| 2 | 密钥模型 | 全局 key + 每个沙箱独立的 per-sandbox token，可单独撤销、单独审计 | 全局 key 是能力共享，不是密钥共享；token 泄漏影响有限 |
+| 3 | 虚拟桌面 | noVNC 只绑 `127.0.0.1`，一次性 ticket；剪贴板/文件传输默认关闭 | 桌面是最大的人工带出通道，默认收敛 |
+| 4 | MCP 覆盖 | 宿主侧 MCP Gateway + 精选 catalog；v1 先做 2–3 个 | 架构可泛化，但适配器要逐个做 |
+| 5 | 隔离 | 沙箱默认无互联网，只能访问网关 | 最强的 session 泄漏防线，也简化网络策略 |
+| 6 | Harness 覆盖 | v1 保证 Claude Code；Codex / DSH 作为 Should | 配置注入都能做，但联调时间要留够 |
+| 7 | GUI 形态 | 本地 Web GUI 优先，Tauri 外壳放 v1.1 | 三天内把时间花在安全链路，不花在签名/打包/WebView 兼容 |
 
-### 最大的产品缺口：OAuth
+### OAuth 的分层策略
 
-Claude Code / Codex 的很多用户用的是 **Claude Pro / ChatGPT Plus 订阅登录**，不是 API key。订阅登录的 token 会落在 `~/.claude` / `~/.codex`，如果登录发生在沙箱里，就违反"zero-secret"。
+OAuth 不是一个开关，至少有三层：
 
-v1 的选择：
+| 层 | 例子 | v1 |
+|---|---|---|
+| MCP OAuth | 远程 MCP 的 OAuth 2.1 / 动态客户端注册 | 不做；v1 用静态 token |
+| Harness 订阅登录 | Claude Pro、ChatGPT Plus | 不做完整流程；实验性导入宿主已有登录 |
+| 企业 SSO/OIDC | 团队身份 | 不做 |
 
-- **只支持 API key / gateway token 模式**（推荐，三天可控）。
-- 或者做 **宿主侧 OAuth broker**：登录在宿主完成，token 存 Keychain，网关注入并负责刷新；沙箱里只有 per-sandbox token。工作量明显更大，放 v1.1。
+**v1 做什么**：
 
-文档按"v1 只支持 API key 模式"落；产品页要明确写出来，避免用户以为订阅可以直接用。
+- 广谱 API key/token（见 README）。
+- 实验性"导入宿主登录"：
+  - **Codex**：读取宿主 `~/.codex/auth.json`（用户授权），存 Keychain；网关注入；刷新按 Codex 公开实现适配。
+  - **Claude Code**：优先用 `claude setup-token` 生成长期 token（若当前版本支持），或读取宿主 Keychain 中已有的登录；过期后重新导入。
+  - 沙箱内永远不发起登录，登录 token 永远不进沙箱。
+- 明确标注"实验性"，不承诺所有 provider/版本。
+
+**为什么不做完整流程**：
+
+- 浏览器回调、PKCE、动态客户端注册、刷新、多账号，至少 3–5 天。
+- Claude Code 闭源，OAuth 端点/刷新行为没有第三方文档；Codex 虽开源（Apache-2.0），但订阅 token 用于第三方网关有 ToS 风险。
+- 三天内做完整 OAuth 会挤掉"零密钥 + 沙箱 + MCP"的主线。
+
+**若 v1 必须包含 OAuth**：只做一个 provider 的宿主导入（建议 Codex），并相应削减 harness/MCP 适配范围。
 
 ## 5. 用户旅程
 
 ### 首次使用
 
 1. 打开 Nullkey（本地 GUI）。
-2. 添加一个模型 key：Anthropic / OpenAI / DeepSeek；点"测试连接"。
+2. 添加一个模型 key：Anthropic / OpenAI / DeepSeek；点"测试连接"。如果已有 Claude Code / Codex 登录，可以点"导入宿主登录"（实验）。
 3. 看到 harness 卡片：Claude Code（未安装）→ 点"安装"；宿主下载、校验、缓存。
 4. 连接 MCP：GitHub → 粘贴 fine-grained token（或后续 OAuth）→ 测试。
 5. 点"启动"→ 选择 Claude Code → 30 秒内进入沙箱桌面。
@@ -62,7 +79,7 @@ v1 的选择：
 2. 选 harness → 启动 → 打开桌面。
 3. 用完 → "停止"；默认删除 home/transcript；token 立即失效。
 
-### 泄漏演练（也是 demo）
+### 泄漏演练（也是演示）
 
 1. 在沙箱终端里 `env`、`cat ~/.claude.json`、`grep -R "sk-" ~`。
 2. 只能看到 `NULLKEY_TOKEN=<sandbox-token>` 之类的非敏感值。
@@ -75,7 +92,7 @@ v1 的选择：
 |---|---|---|
 | Home | harness 卡片、最近沙箱、快速启动 | 安装/启动/继续 |
 | Sandbox | 状态、桌面、日志、审计、"扫描密钥" | 打开桌面、停止、删除 |
-| Keys | 全局 key 列表（provider、label、last used） | 添加、测试、删除；**永不显示明文** |
+| Keys | 全局 key 列表（provider、label、last used、auth type） | 添加、导入宿主登录、测试、删除；**永不显示明文** |
 | MCP | catalog + 已连接 server | 连接、测试、启用/禁用 |
 | Settings | 资源、保留策略、网络、高级 | 默认值即可，不暴露 YAML |
 | Audit | 沙箱/凭证/MCP 事件 | 过滤、导出 |
@@ -92,7 +109,7 @@ v1 的选择：
 ### Must（三天）
 
 - 本地 GUI + daemon 骨架；Colima/Docker 沙箱 + 虚拟桌面。
-- Keychain 全局密钥：添加、测试、删除。
+- Keychain 全局密钥：添加、测试、删除；provider registry 覆盖 8–10 个模型 provider + 通用 auth 类型。
 - 模型网关：per-sandbox token → 真实 key；Claude Code 跑通。
 - 宿主侧 MCP 网关 + GitHub MCP；沙箱配置零敏感信息。
 - 启动/停止/删除沙箱；token 撤销；审计事件。
@@ -101,13 +118,14 @@ v1 的选择：
 ### Should
 
 - Codex、DSH 适配。
+- Codex/Claude 宿主登录导入（实验）。
 - 第二个 MCP（Filesystem 或 Slack）。
 - Key 轮换、审计导出、Tauri 外壳。
 - 沙箱资源限制、空闲自动停止。
 
 ### Won't
 
-- OAuth 订阅登录。
+- 完整 OAuth 授权流程；沙箱内登录；MCP OAuth（v1.1）。
 - Windows / Linux host。
 - 多用户、公网访问。
 - microVM / 强隔离认证。
@@ -131,11 +149,11 @@ v1 的选择：
 - Claude Code、Codex、DSH 至少 2 个跑通（理想 3 个）。
 - 至少 2 个 MCP server 可用，配置里无敏感信息。
 - 冷启动 < 60 秒，热启动 < 30 秒。
-- 3 分钟 demo 不翻车。
+- 3 分钟演示不翻车。
 
 ## 10. 待确认
 
-1. OAuth 订阅登录是否必须？如果评委/用户强需求，v1 要改成宿主侧 OAuth broker。
+1. OAuth 订阅登录是否必须？如果评审或用户明确要求，v1 需要增加宿主侧 OAuth broker。
 2. GUI 是否必须是原生 `.app`？如果必须，Tauri 外壳要占半天到一天。
 3. 沙箱停止后，workspace 是否保留？默认删除 home，workspace 可选保留。
 4. 是否需要 Windows/Linux 的路线图承诺？
