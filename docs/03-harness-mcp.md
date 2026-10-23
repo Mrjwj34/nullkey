@@ -111,6 +111,10 @@ export ANTHROPIC_AUTH_TOKEN="<per-sandbox-token>"
 - **只有 WebUI 时**：启动 `dsh web`（或等价命令）绑定 `127.0.0.1:<port>`；adapter 注册 service；GUI 通过 [service tunnel](09-service-tunnel.md) 打开。
 - WebUI 里的模型/MCP 仍走 gateway；页面里没有真实 key。
 
+## 4.1 宿主 CLI / Terraform（v1.1）
+
+`gh` / `aws` / `kubectl` / `terraform` 不把宿主配置挂进沙箱，而是通过 Host Tool Gateway 的 shim 执行；Terraform 的 plan/apply 需要审批。设计见 [host-tools-and-services.md](host-tools-and-services.md)。
+
 ## 5. 桌面端 catalog（Should）
 
 - 允许下载额外支持的桌面端（Codex app、其他 GUI 工具）。

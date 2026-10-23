@@ -146,6 +146,7 @@ token 不进入 sandbox
 - [08 · API 契约](docs/08-api-contract.md) · [OpenAPI](api/openapi.yaml)
 - [09 · 服务隧道与产物审查](docs/09-service-tunnel.md)
 - [10 · 交互契约与 GUI 验收](docs/10-interaction-contract.md)
+- [宿主 CLI / 沙箱服务 / Terraform（v1.1）](docs/host-tools-and-services.md)
 - [SLO](slo.md)
 
 ## 三天 MVP
