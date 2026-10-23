@@ -4,7 +4,7 @@
 
 ## 1. 结论
 
-1. **"沙箱里只有占位符/token，真实凭证在沙箱外注入"已经是成熟模式**：microsandbox、E2B、Envoy 都有实现。我们不需要发明新机制，只需要把机制用在 harness + MCP 的产品体验上。
+1. **"沙箱里只有占位符/token，真实凭证在沙箱外注入"已经是成熟模式**：microsandbox、E2B、Envoy 都有实现。不需要发明新机制，重点是把机制用在 harness + MCP 的产品体验上。
 2. 但它们的粒度是"平台级 secrets"：环境变量占位符 + 目标主机。**没有解决"用户在 GUI 里配一次，Claude Code / Codex / DSH 和 MCP 全都不用再填 key"这个产品问题。**
 3. v1 底座选 **Colima（MIT）+ Docker + 自建 Ubuntu ARM 桌面镜像**：本地 VM 边界、Apache/MIT、Apple Silicon、无需 Docker Desktop 商业许可。
 4. microsandbox / Apple `container` 作为 v0.2 的 microVM 后端，通过 `SandboxProvider` 替换；不要在三天里赌 beta。
@@ -42,15 +42,15 @@
 
 ### 2.4 其它可借鉴的机制
 
-| 方案 | 机制 | 与我们的关系 |
+| 方案 | 机制 | 与本项目的关系 |
 |---|---|---|
-| [Envoy `credential_injector`](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/credential_injector_filter) | 出口 HTTP filter，按 host 注入凭证 | 证明"出口注入"可行；我们不做通用 MITM |
+| [Envoy `credential_injector`](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/credential_injector_filter) | 出口 HTTP filter，按 host 注入凭证 | 证明"出口注入"可行；本项目不采用通用 MITM |
 | [1Password `op run` / secret references](https://developer.1password.com/docs/cli/secret-references/) | 脚本写 `op://...`，运行时解析 | "引用而非值"的 UX 先例；假设进程可信 |
 | [Vault Agent Injector](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/injector) | 把密钥注入 Pod | 反例：密钥进了工作负载 |
 | git credential helper / ssh-agent | 不持有长期 key，只拿能力 | 未来 CLI 的方向 |
 | [Claude Code sandbox](https://code.claude.com/docs/en/sandboxing) | 文件系统隔离 + 网络代理 allowlist | 业界同款"默认断网 + 代理" |
 | [MCP Security Best Practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices) | confused deputy、token passthrough | 宿主侧网关防 confused deputy |
-| [The lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) | 私有数据 + 不可信内容 + 外发 = 泄漏 | 我们明确不解决这一段；只解决 key 泄漏 |
+| [The lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) | 私有数据 + 不可信内容 + 外发 = 泄漏 | 不在范围内；产品只解决 key 泄漏 |
 
 ### 2.5 OAuth 的复杂度
 
@@ -91,7 +91,7 @@
 
 - microsandbox 是 beta；桌面、端口转发、宿主 IPC 的不确定性会吃掉 D1。
 - Colima 已安装、MIT、Apple Silicon 成熟；Docker 生态的镜像/网络/工具链齐全。
-- 我们的核心风险是"配置注入 + 网关 + GUI"，不是"虚拟化层"；先把产品链路跑通。
+- 核心风险是"配置注入 + 网关 + GUI"，不是"虚拟化层"；先把产品链路跑通。
 - `SandboxProvider` 让 microVM 成为 2–4 小时的替换，而不是重写。
 
 ### 为什么自建桌面镜像

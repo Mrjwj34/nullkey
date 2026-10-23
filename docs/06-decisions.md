@@ -86,7 +86,7 @@
 
 ## ADR-009 · 沙箱默认无互联网
 
-**Context**：允许上网会增加 exfiltration、供应链、代理配置的复杂度；我们的威胁模型只关心 key 泄漏。  
+**Context**：允许上网会增加 exfiltration、供应链、代理配置的复杂度；本威胁模型只关心 key 泄漏。  
 **Decision**：沙箱只有到 gateway 的内部路由；模型/MCP 的出站由宿主完成。  
 **Consequences**：
 

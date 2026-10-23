@@ -16,11 +16,11 @@
 
 | Harness | API key | 宿主登录导入（v1 实验） | 完整 OAuth |
 |---|---|---|---|
-| **Claude Code** | ✅ `ANTHROPIC_AUTH_TOKEN` | ✅ `claude setup-token` / Keychain 导入 | ❌ v1.1 |
+| **Claude Code** | ✅ `ANTHROPIC_AUTH_TOKEN` | ✅ `claude setup-token`（若版本支持）/ Keychain 导入 | ❌ v1.1 |
 | **Codex** | ✅ `env_key` | ✅ `~/.codex/auth.json` 导入 | ❌ v1.1 |
 | **DSH** | ✅ | n/a | ❌ |
 
-原则：**登录只发生在宿主，token 只进 Keychain，网关注入；沙箱内不发起登录。**
+原则：**登录只发生在宿主，token 只进 Keychain，网关注入；沙箱内不发起登录。** 路径与字段以当前版本为准，导入为实验性。
 
 ### 1.2 模型 provider 矩阵（v1）
 
