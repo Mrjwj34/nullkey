@@ -16,7 +16,7 @@ Nullkey 把沙箱变成 **zero-secret zone**：
 - 沙箱里的 harness / MCP 配置只有一枚 **per-sandbox token**（可撤销、只在当前沙箱有效）。
 - 真实凭证只在宿主机：macOS Keychain + Nullkey daemon。
 - 模型请求和 MCP 调用都经过宿主侧网关，由网关在沙箱外注入真实凭证。
-- 沙箱默认没有互联网，只能访问网关。
+- 沙箱默认走 `filtered` 网络：互联网经 egress proxy（域名 allowlist），认证流量走网关。
 
 **即使整个沙箱磁盘/transcript 被拿走，也拿不到真实 key。**
 
@@ -30,6 +30,7 @@ flowchart LR
     KC[("macOS Keychain")]
     MG["Model Gateway"]
     MCP["MCP Gateway"]
+    EP["Egress Proxy<br/>allowlist"]
     SM["Sandbox Manager"]
     GUI --> D
     D --> KC
@@ -41,11 +42,14 @@ flowchart LR
   subgraph SBX["沙箱 · 不可信（但无需假设 Agent 恶意）"]
     H["Harness<br/>Claude Code / Codex / DSH"]
     DT["Desktop<br/>Xvfb + noVNC"]
-    T["per-sandbox token"]
+    T["per-sandbox token<br/>（配置）"]
     H --> T
   end
 
-  T -->|model / MCP| D
+  H --> T
+  H -->|model / MCP / git| D
+  H -->|HTTP(S)_PROXY| EP
+  EP -->|allowlist| NET["Internet"]
   DT -->|noVNC| D
   SM --> H
   MG -->|real key| UP["模型 API"]
@@ -72,6 +76,8 @@ Harness → http://gateway/mcp/github
         → 结果返回给 Harness
 ```
 
+未认证流量（`npm`/`pip`/公开文档/公开 git）经 egress proxy；认证流量（模型/MCP/git）经 gateway。沙箱没有默认外网路由，不能直连 IP。
+
 ## 产品形态
 
 - **本地 GUI**：首页选 harness；一键启动沙箱；浏览器里看虚拟桌面；Keys / MCP / Audit 三个管理页。
@@ -97,9 +103,10 @@ Harness → http://gateway/mcp/github
 - 目标网站/上游 API 被劫持
 - 恶意 MCP server 实现
 - 沙箱逃逸（提供隔离，但不宣称经过认证的强隔离）
+- 通过互联网/MCP/模型通道外发私有数据
 - 供应链攻击、物理访问
 
-这个取舍是刻意的：三天内把"key 不进沙箱"做到可信、可验证、好用，比假装能防住所有 Agent 攻击更有价值。
+该取舍是有意为之：三天内把"key 不进沙箱"做到可信、可验证、好用，比声称能防住所有 Agent 攻击更有价值。
 
 ## 计划支持
 
@@ -107,6 +114,7 @@ Harness → http://gateway/mcp/github
 |---|---|---|
 | Harness | Claude Code、Codex、DSH | 通过 base URL + per-sandbox token 接入；API key 为主，订阅登录可实验性导入 |
 | MCP | GitHub、Slack、Notion、Postgres；Filesystem | 有凭证的在宿主侧，凭据由网关注入；Filesystem 在沙箱侧（无凭证）；v1 先做 2–3 个 |
+| Network | `offline` / `filtered`（默认）/ `open` | 互联网只经 egress proxy；认证只经 gateway |
 | Host | macOS Apple Silicon | 后续 Linux / Windows |
 | Auth | API key/token 广谱支持；OAuth 宿主登录导入（实验） | 不做完整 OAuth 授权流程；详见 [03](docs/03-harness-mcp.md#6-oauth) |
 

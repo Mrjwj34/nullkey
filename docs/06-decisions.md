@@ -84,15 +84,16 @@
 - "桌面级"体验稍弱；可以在 v1.1 用 Tauri 包一层。
 - 必须确保 API 只绑 127.0.0.1，避免 LAN 暴露。
 
-## ADR-009 · 沙箱默认无互联网
+## ADR-009 · 沙箱默认 filtered，而不是断网
 
-**Context**：允许上网会增加 exfiltration、供应链、代理配置的复杂度；本威胁模型只关心 key 泄漏。  
-**Decision**：沙箱只有到 gateway 的内部路由；模型/MCP 的出站由宿主完成。  
+**Context**：断网最安全，但会让包安装、公开文档、公开 git、浏览器都不可用，产品局限太大；而 key 隔离并不依赖断网。  
+**Decision**：三档网络：`offline` / `filtered`（默认）/ `open`。互联网只经 egress proxy；代理只做 CONNECT + 域名 allowlist，不做 TLS MITM；认证流量走 gateway。  
 **Consequences**：
 
-- 最强、最简单的隔离；session 泄漏也无法把 key 发出去。
-- Agent 不能直接浏览网页；需要网页能力时，后续加宿主侧 web tool。
-- harness 的自动更新/遥测要禁用。
+- 日常开发可用；敏感仓库可切 `offline`。
+- `open` 有数据外发风险，需明确警告；prompt injection/恶意 Agent 不在威胁模型内。
+- 需要维护默认 allowlist 和代理日志。
+- 不识别 proxy 的程序会失败（fail closed），v1.1 可用 iptables REDIRECT 兼容。
 
 ## ADR-010 · Harness 宿主侧下载、只读挂载
 
@@ -124,6 +125,16 @@
 - 需要处理"宿主已登录/未登录"的状态显示与重新导入。
 - 对不支持 API key 的 harness，v1 只能依赖导入或暂不支持。
 
+## ADR-013 · 网络与密钥隔离正交
+
+**Context**：容易把"沙箱安全"等同于"断网"，但真正防 key 泄漏的是"key 不在沙箱 + 认证走网关"。  
+**Decision**：允许互联网，但强制经 egress proxy；认证流量（模型/MCP/git）走 gateway；沙箱无默认路由，不能直连。  
+**Consequences**：
+
+- 产品可用性显著提升；安全论证仍然成立。
+- 需要区分"未认证流量"与"认证流量"，后者不能用通用代理。
+- 数据外泄是另一个问题，不在本威胁模型内。
+
 ## 开放问题
 
 | # | 问题 | 影响 | 建议 |
@@ -136,3 +147,4 @@
 | 6 | 是否做 microVM？ | 中 | v1 不做；v0.2 评估 microsandbox / Apple container |
 | 7 | 许可证？ | 低 | 当前未加 LICENSE；建议 Apache-2.0（与依赖兼容） |
 | 8 | 是否支持多沙箱并行？ | 中 | v1 允许，但资源限制；默认串行更稳 |
+| 9 | 默认 allowlist 放多宽？ | 中 | 先覆盖 npm/PyPI/GitHub/常见文档；可切 `open` |

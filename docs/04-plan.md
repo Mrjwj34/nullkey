@@ -7,6 +7,7 @@
 ### Must（不做完不上台）
 
 - 本地 GUI（React + daemon API）+ Colima/Docker 沙箱 + 虚拟桌面。
+- Egress proxy + 三档网络（`offline` / `filtered` 默认 / `open`）；沙箱无默认路由。
 - macOS Keychain 全局密钥：添加、测试、删除；provider registry 覆盖 8–10 个模型 provider + 通用 auth 类型。
 - 模型网关：per-sandbox token → 真实 key；Claude Code 跑通。
 - 宿主侧 MCP 网关 + GitHub MCP；沙箱配置零敏感信息。
@@ -18,6 +19,7 @@
 
 - Codex、DSH 适配。
 - Codex/Claude 宿主登录导入（实验）。
+- Git smart HTTP proxy（私有 repo clone/push，token 不进沙箱）。
 - Filesystem MCP（沙箱侧）+ Slack/Notion 之一。
 - Key 轮换、审计导出。
 - Tauri 外壳。
@@ -50,8 +52,8 @@
 | 时间 | A | B | C |
 |---|---|---|---|
 | 09:00–10:00 | 仓库、接口冻结 | 同左 | 同左 |
-| 10:00–12:00 | Colima + Docker + Webtop/noVNC 桌面跑通 | daemon 骨架、Keychain helper | GUI 骨架（Home/Keys） |
-| 12:00 | **Gate 1：浏览器能看到沙箱桌面，沙箱无外网** | | |
+| 10:00–12:00 | Colima + Docker + Webtop/noVNC + egress proxy 骨架 | daemon 骨架、Keychain helper | GUI 骨架（Home/Keys） |
+| 12:00 | **Gate 1：浏览器能看到沙箱桌面；直连外网失败、proxy/gateway 可达** | | |
 | 13:00–18:00 | SandboxProvider、token 注入、端口映射 | 模型网关（Anthropic/OpenAI）、key 存取 | Claude Code 安装/配置模板；GUI 启动流程 |
 | 18:00–20:00 | 联调 | 流式转发、错误处理 | 端到端：Claude Code 发一条消息 |
 | 20:00 | **M1：Claude Code 在沙箱里通过网关调用模型；沙箱内只有 token** | | |
@@ -85,7 +87,7 @@
 
 | Gate | 时间 | 通过标准 | 不通过 |
 |---|---|---|---|
-| G1 沙箱 | D1 12:00 | 桌面可见；无外网；无宿主挂载 | 换 Docker Desktop/Webtop 镜像；Colima 2 小时不通即切换 |
+| G1 沙箱 | D1 12:00 | 桌面可见；无默认外网路由；proxy/gateway 可达；无宿主挂载 | 换 Docker Desktop/Webtop 镜像；Colima 2 小时不通即切换 |
 | G2 MCP | D2 12:00 | Claude Code 通过网关调用 GitHub；配置只有 token | 先做 Filesystem MCP（无凭证），GitHub 放 Should |
 | G3 演示 | D3 12:00 | Must 全过；3 分钟不超时 | 砍 Codex/DSH，保 Claude Code + GitHub + 扫描 |
 
@@ -100,6 +102,7 @@
 | 0:35 | Nullkey GUI | Keys 页面：Anthropic、GitHub 已配置，只显示 fingerprint。 |
 | 0:50 | 启动 | 选 Claude Code → 启动 → 桌面出现。 |
 | 1:10 | 正常任务 | 让 Claude Code "搜一下 GitHub 上 X 项目并总结"；模型 + MCP 都工作。 |
+| 1:22 | 网络不残废 | 沙箱里 `npm install` / `curl https://docs...` 可用；`curl https://1.1.1.1` 失败。 |
 | 1:35 | 沙箱内检查 | 终端 `env`、`cat ~/.claude.json`、`grep -R "sk-" ~`：只有 `NULLKEY_TOKEN`。 |
 | 1:55 | 泄漏演练 | 把 `~/.claude` 打包下载，打开：transcript 只有 token。 |
 | 2:10 | 撤销 | GUI 停止沙箱；桌面里的请求失败；重启后新 token。 |
@@ -120,6 +123,8 @@
 | 风险 | 概率 | 影响 | 预案 |
 |---|---|---|---|
 | Colima 内网/端口不通 | 中 | 高 | 换 Docker Desktop；或 bridge 容器 + host.docker.internal |
+| Egress proxy 规则太严/太松 | 中 | 中 | 默认 allowlist 覆盖 registry/GitHub/docs；GUI 可切 `open` |
+| TLS/代理兼容性 | 中 | 中 | 只用 CONNECT、不做 MITM；不识别 proxy 的程序失败并提示 |
 | arm64 桌面镜像难搞 | 中 | 高 | 自建 Debian + Xfce + noVNC；或先用 headless + 截图 |
 | Claude Code 配置字段变化 | 中 | 中 | 固定版本；适配器 smoke test；降级到 `ANTHROPIC_BASE_URL` |
 | MCP HTTP transport 不兼容 | 中 | 中 | 用 stdio bridge；先做 Filesystem |
@@ -132,7 +137,7 @@
 
 - [ ] GUI 能添加/测试/删除 key，永不显示明文。
 - [ ] 能启动/停止/删除沙箱；桌面可访问。
-- [ ] 沙箱无外网（`curl` 失败）。
+- [ ] 沙箱无默认外网路由（直连 IP 失败）；`filtered` 下 allowlist 可用。
 - [ ] 沙箱无宿主挂载（`mount`/`ls` 检查）。
 - [ ] Claude Code 通过网关调用模型。
 - [ ] Claude Code 通过网关调用 GitHub MCP。
