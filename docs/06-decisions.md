@@ -178,6 +178,23 @@
 
 **Consequences**：具体契约见 [07](07-state-and-mounts.md)、[08](08-api-contract.md)；启动测量以 WS ready 且输入启用为终点，另报 harness 就绪时间，见 [SLO](../slo.md)。本 ADR 修订 ADR-008/009/014/015 的相关交互语义。
 
+## ADR-019 · 宿主 CLI 与沙箱服务的执行面（v1.1）
+
+**Context**：`gh`/`aws`/`kubectl`/`terraform` 需要宿主配置和凭证；挂进沙箱会破坏 zero-secret。沙箱内长驻服务（DSH WebUI、preview、临时 DB）需要启动、认证和访问路径。  
+**Decision**：
+
+- v1.1 增加 **Host Tool Gateway**：沙箱内 shim → 宿主 gateway；argv 数组、allowlist、sanitized env、cwd=workspace、审批/审计，不经过 `sh -c`。
+- 增加 **Service Supervisor**：按 manifest 启动/停止服务，健康检查，端口登记，生成式/网关代理认证；用户经 service tunnel 访问。
+- Terraform 走 Host Tool Gateway（推荐）或沙箱内短期凭证模式；`apply` 绑定 plan hash 并审批，`destroy` 默认拒绝。
+- 不把宿主服务/任意端口暴露给沙箱；native runtime 的 loopback 共享限制在 [host-tools-and-services.md](host-tools-and-services.md) 说明。
+
+**Consequences**：
+
+- 宿主 CLI/Terraform 可用，凭证不进沙箱。
+- Host Tool Gateway 成为新的 TCB 路径，需要严格 allowlist/审批/输出脱敏。
+- Service Supervisor 只服务声明过的服务；native 的 loopback 隔离弱于 desktop/VM。
+- v1 不实现 Host Tool Gateway；v1 用 MCP GitHub 替代 `gh`。
+
 ## 已确认的产品决策
 
 | # | 问题 | 决策 |

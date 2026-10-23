@@ -32,6 +32,7 @@
 - Windows / Linux host。
 - 多租户、公网访问。
 - 完整桌面 app catalog。
+- 宿主 CLI / Terraform 的 Host Tool Gateway（v1.1）。
 - prompt injection / 恶意 Agent 防御。
 - 按 harness/MCP 的凭证 scope。
 
