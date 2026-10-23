@@ -1,6 +1,6 @@
 # 11 · Kernel 实施计划（Go）
 
-> 状态：**计划冻结，骨架已建立，功能实现未开始**。
+> 状态：**P0–P9 已实现；普通 PR CI 与 release CI 门禁已启用**。
 >
 > 本文只覆盖后端 kernel（`nullkeyd`）。GUI 由独立团队按
 > [api/openapi.yaml](../api/openapi.yaml) 并行实现；本仓库不修改 GUI 代码。
@@ -64,7 +64,7 @@ Kernel 必须把「给 GUI 的控制面」和「给沙箱的数据面」分开�
 - 端口可在配置中覆盖；每个 listener 启动时独立校验 loopback。
 - 只有 control API 会被 GUI 发现；gateway/proxy 地址通过 sandbox 环境变量注入。
 
-> 骨架当前只启动 Control API。Gateway/Proxy 在 P4/P7 接入，配置与端口模型已在此冻结。
+> 三个 listener 均已接入；配置与端口模型保持本节冻结的语义。
 > `services_only` 只关闭通用 egress；模型/MCP/git 仍可经 gateway 访问远端，**不是离线模式**。
 
 ## 3. 总体架构
@@ -135,20 +135,35 @@ cmd/nullkeyd
 
 ## 5. 代码结构
 
-### 5.1 当前（骨架）
+### 5.1 当前实现
 
 ```text
-cmd/nullkeyd/                 daemon 入口：flag、signal、日志
+cmd/nullkeyd/                 daemon 入口 + __sandbox_exec helper
 internal/
-  api/                        control-plane HTTP：路由、中间件、错误、system handlers
+  api/                        control-plane HTTP：路由、中间件、错误、handlers
   contract/                   OpenAPI ↔ 路由表契约测试
+  core/                       领域服务：workspace/state/sandbox/job/credential/
+                              oauth/mcp/service/tunnel/gateway/audit
   domain/                     领域类型/枚举
-  id/                         ID 生成
-  kernel/                     配置、token 装载、组装、listener 生命周期
+  id/                         ID/token 生成
+  kernel/                     配置、token 装载、组装、三个 listener 生命周期
   ports/                      adapter 接口
-  version/                    版本（ldflags 注入）
-test/acceptance/              黑盒验收（build tag: acceptance）
-api/openapi.yaml              GUI ↔ kernel 唯一契约（不改语义）
+  store/sqlite/               Store + migrations
+  secret/                     Keychain（darwin cgo）/ 加密文件 CI fallback
+  runtime/native/             Seatbelt + process + PTY + service process
+  terminal/                   ticket + WebSocket bridge
+  gateway/                    gateway listener
+  gateway/mcp/                JSON-RPC/SSE 代理 + tool allowlist
+  egress/                     CONNECT + allowlist proxy
+  events/                     SSE bus
+  audit/                      append-only + redaction
+  artifacts/                  只读文件树 / 预览 / diff
+  redact/                     credential-shape redaction
+  version/                    版本（ldflags）
+test/acceptance/              黑盒验收（acceptance / acceptance+release）
+testdata/tunnel_server.py     HTTP/SSE/WS 隧道测试服务
+scripts/coverage.sh           全局覆盖率门禁（≥90%）
+api/openapi.yaml              GUI ↔ kernel 唯一契约
 docs/10, 11, 12, 13           交互契约、本计划、验收断言、v1.1 边界
 ```
 
@@ -201,7 +216,7 @@ test/bench/                   Go benchmarks
 
 约定：
 
-- 未实现端点当前返回 `501 not_implemented`，不得返回伪造的 `200`。
+- 所有端点真实实现；不得返回伪造的 `200` 或 `501 not_implemented`。
 - `desktop` 是唯一允许长期返回 `501 desktop_unavailable` 的正式端点。
 - 每个端点实现时：先补/启用对应验收用例，再改 `RouteSpec.Implemented`。
 - `POST` 支持 `Idempotency-Key`；分页统一 `{items, next_cursor}`。
@@ -383,17 +398,16 @@ creating -> starting -> running -> stopping -> stopped
 
 ```bash
 make check                 # fmt/vet/unit/contract/build/acceptance-compile
-make acceptance-ci         # 非严格：已实现断言执行，未实现项 skip
-make acceptance            # 严格：未实现项直接失败（里程碑 gate）
+make acceptance-ci         # 非严格（当前无 pending，等价严格）
+make acceptance            # 严格：任何失败都阻断
 make release-product       # release-only：产品能力断言
-make release-slo           # release-only：SLO gate（P9 前预期失败）
+make release-slo           # release-only：SLO gate（严格）
 ```
 
 - **普通 PR CI**：并行跑 static、build（linux/darwin）、unit（linux/macOS）、
   acceptance（linux/macOS）、OpenAPI contract；不跑 product/SLO。
 - **Release CI**：`.github/workflows/release.yml` 在 GitHub Release `published` 时
-  运行产品能力断言与 SLO gate，并上传 SLO 输出；SLO 在 P9 前会因未实现项失败，
-  这是发布 gate 的正确信号，不要用 skip 伪装通过。
+  运行产品能力断言与 SLO gate，并上传 SLO 输出；SLO 必须通过。
 
 - 严格模式 = `NULLKEY_ACCEPTANCE_STRICT=1`。
 - 断言 ID 稳定；实现一个功能就把对应 `pending` 改为真实断言，并更新
@@ -414,7 +428,7 @@ make release-slo           # release-only：SLO gate（P9 前预期失败）
 
 | 阶段 | 交付 | 退出标准 | 主要 AC |
 |---|---|---|---|
-| **P0 骨架** | 计划、验收、AGENTS、CI、控制面路由/health/auth | `make check` 绿；OpenAPI 53 条路由全覆盖；未实现端点 501 | AC-API-001..007 |
+| **P0 骨架** | 计划、验收、AGENTS、CI、控制面路由/health/auth | `make check` 绿；OpenAPI 53 条路由全覆盖 | AC-API-001..007 |
 | **P1 API + 存储** | SQLite/migrations、ID、workspace/state CRUD、锁、审计、SSE、取消语义 | 资源 CRUD 与错误码稳定；重启数据还在；取消/删除语义符合 docs/08 | AC-STATE-001/002/003、AC-AUD-001、AC-API-008/009/010/011 |
 | **P2 Native runtime + PTY** | Seatbelt profile、进程 supervisor、terminal WS `ready`/重连、stats | Terminal 可交互；越权读失败；停止即失效；重连不重复输入 | AC-RT-001..008、AC-SEC-001..005 |
 | **P3 Credentials** | Keychain、provider registry、credential CRUD、token service | 只返回 fingerprint；撤销生效 | AC-CRED-001/002/005、AC-SEC-007/008 |
@@ -447,28 +461,32 @@ make release-slo           # release-only：SLO gate（P9 前预期失败）
 | 契约漂移 | GUI 联调失败 | `internal/contract` + 只做加法；变更走 ADR |
 | 时间不足 | Must 未完成 | 按 P0→P4→P2→P3→P6→P7 砍 Should；先保 Codex + token |
 
-## 14. 开放问题（实现前需确认）
+## 14. 已确认的实现决策
 
-1. **daemon token 交付**：GUI/launcher 注入 env，还是读取 `<home>/daemon-token`？
-   骨架两者都支持：优先 env，否则生成/复用 0600 文件。
-2. **CORS origin 白名单**：默认仅 loopback origin；是否需要固定 GUI 端口？
-3. **Keychain 库**：`keybase/go-keychain` 是否满足「不走 argv」和签名要求；
-   不满足则自写 Security.framework cgo wrapper。
-4. **MCP SDK**：官方 Go SDK 对 Streamable HTTP/stdio 的支持度；固定版本。
-5. **Codex 配置**：`wire_api`（responses/chat）与 `env_key` 字段随版本变化；
-   固定版本并加 smoke test。
-6. **GitHub OAuth app**：自注册还是用户自带 client id；v1 至少支持 PAT。
-7. **desktop runtime**：v1 是否只返回 `501 desktop_unavailable`，还是接 Apple container。
-8. **Service Supervisor manifest**：v1 只由 adapter 内置，还是允许用户自定义服务；用户自定义需要
-   端口范围、认证和审计设计，且不能新增未冻结的 GUI 端点。
-9. **Host Tool Gateway/Terraform**：docs/13 已定为 v1.1；不在 v1 实现，不修改当前 OpenAPI。
+1. **daemon token 交付**：优先 `NULLKEY_DAEMON_TOKEN`；否则生成/复用
+   `<home>/daemon-token`（0600）。
+2. **CORS origin 白名单**：仅 loopback origin；非 loopback 直接 403。
+3. **Keychain**：darwin 使用 Security.framework cgo wrapper（service
+   `com.nullkey.credentials`，无 argv）；CI/Linux 使用 AES-GCM 加密文件 fallback，
+   可用 `NULLKEY_SECRET_BACKEND=file` 显式选择。
+4. **MCP**：使用自写 JSON-RPC/SSE 代理（stdlib），支持 Streamable HTTP 与
+   tool allowlist；stdio bridge 仍按需后续补充。
+5. **Codex 配置**：模型 gateway 以 provider base URL + auth adapter 注入；
+   不在沙箱写真实 key。
+6. **GitHub OAuth**：支持 PAT/宿主导入；OAuth app 由 `NULLKEY_OAUTH_GITHUB_*`
+   配置，未配置时状态为 unavailable。
+7. **desktop runtime**：v1 稳定返回 `501 desktop_unavailable`。
+8. **Service Supervisor manifest**：由 workspace 的 `.nullkey/services.json`
+   提供，v1 不新增 GUI 端点；端口限制在 1024–65535（非特权端口）。
+9. **Host Tool Gateway/Terraform**：v1.1；v1 不实现、不修改当前 OpenAPI。
 
 ## 15. 完成定义（Definition of Done）
 
 一个 kernel 功能算完成，必须同时满足：
 
-- [ ] 对应 OpenAPI 端点/事件有真实实现，不再返回 `501`；
-- [ ] 对应 AC ID 从 `pending` 变为真实断言并通过严格模式；
+- [x] 对应 OpenAPI 端点/事件有真实实现，不再返回 `501`；
+- [x] 对应 AC ID 从 `pending` 变为真实断言并通过严格模式；
+- [x] 全局 Go 测试覆盖率 ≥90%（`make coverage`）；
 - [ ] 错误码、`X-Request-Id`、分页/幂等符合 [08](08-api-contract.md)；
 - [ ] 不新增凭证泄漏面；redaction/路径/token 测试通过；
 - [ ] `make check` 绿；涉及 runtime/Keychain 的改动跑过集成测试；

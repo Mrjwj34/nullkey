@@ -172,10 +172,11 @@ make check      # gofmt / vet / unit / OpenAPI contract / build / acceptance com
 make test       # go test ./...
 make build      # bin/nullkeyd
 make run        # 启动 control-plane（loopback only）
-make acceptance-ci  # 黑盒验收：已实现断言执行，未实现项 skip
+make acceptance-ci  # 黑盒验收（非严格 = 严格，已无 pending）
+make coverage        # 全局 Go 覆盖率门禁（≥90%）
 make acceptance     # 严格验收（里程碑 gate）
 make release-product  # release-only：产品能力断言
-make release-slo      # release-only：SLO gate（P9 前预期失败）
+make release-slo      # release-only：SLO gate（严格）
 make release-check    # 产品能力 + SLO
 ```
 

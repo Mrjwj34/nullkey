@@ -161,27 +161,27 @@ func TestOpenAPIHasBearerSecurity(t *testing.T) {
 	}
 }
 
-func TestHealthAndCapabilitiesAreImplemented(t *testing.T) {
-	implemented := make(map[string]bool)
+func TestAllRoutesAreImplemented(t *testing.T) {
+	var pending []string
 	for _, route := range api.RouteSpecs() {
-		if route.Implemented {
-			implemented[route.Method+" "+route.Path] = true
+		if !route.Implemented {
+			pending = append(pending, route.Method+" "+route.Path)
 		}
+	}
+	sort.Strings(pending)
+	if len(pending) > 0 {
+		t.Fatalf("routes still marked unimplemented (%d):\n  %s", len(pending), strings.Join(pending, "\n  "))
 	}
 	for _, key := range []string{"GET /api/v1/health", "GET /api/v1/capabilities"} {
-		if !implemented[key] {
-			t.Errorf("%s should be implemented in P0", key)
+		found := false
+		for _, route := range api.RouteSpecs() {
+			if route.Method+" "+route.Path == key && route.Implemented {
+				found = true
+			}
 		}
-	}
-	if len(implemented) != 2 {
-		// Keep the P0 skeleton honest: implemented endpoints must be reflected in
-		// docs/11; this count is updated deliberately as milestones land.
-		keys := make([]string, 0, len(implemented))
-		for key := range implemented {
-			keys = append(keys, key)
+		if !found {
+			t.Errorf("%s should be implemented", key)
 		}
-		sort.Strings(keys)
-		t.Fatalf("implemented routes = %d, want 2 at P0:\n  %s", len(implemented), strings.Join(keys, "\n  "))
 	}
 }
 

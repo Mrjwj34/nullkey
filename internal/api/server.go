@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/Mrjwj34/nullkey/internal/core"
 )
 
 // Capabilities is the JSON body of GET /api/v1/capabilities. It must reflect
@@ -44,6 +46,8 @@ type Config struct {
 	StartedAt time.Time
 	// Capabilities is reported by /capabilities.
 	Capabilities Capabilities
+	// Service is the kernel service layer used by resource handlers.
+	Service *core.Service
 }
 
 // Server is the control-plane HTTP transport.
@@ -67,6 +71,9 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 		cfg.Version = "0.0.0"
 	}
 	cfg.Capabilities = normalizeCapabilities(cfg.Capabilities)
+	if cfg.Service != nil {
+		cfg.Capabilities = capabilitiesFromService(cfg.Service)
+	}
 
 	s := &Server{
 		cfg:     cfg,
@@ -87,6 +94,10 @@ func (s *Server) buildHandler() http.Handler {
 	for _, route := range routeTable {
 		route := route
 		mux.HandleFunc(route.Method+" "+route.Path, func(w http.ResponseWriter, r *http.Request) {
+			if route.Method == http.MethodPost {
+				s.idempotency(route.Handler, w, r)
+				return
+			}
 			route.Handler(s, w, r)
 		})
 	}
@@ -136,6 +147,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, r, http.StatusOK, s.cfg.Capabilities)
+}
+
+func capabilitiesFromService(svc *core.Service) Capabilities {
+	caps := DefaultCapabilities()
+	caps.Tunnel = true
+	caps.Artifacts = true
+	caps.OAuthProviders = []string{}
+	for _, provider := range svc.OAuthProviders() {
+		if provider.Status == "available" {
+			caps.OAuthProviders = append(caps.OAuthProviders, provider.ID)
+		}
+	}
+	caps.MCPServers = []string{}
+	for _, server := range svc.MCPCatalog() {
+		caps.MCPServers = append(caps.MCPServers, server.ID)
+	}
+	return normalizeCapabilities(caps)
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
