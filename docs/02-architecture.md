@@ -13,6 +13,7 @@ flowchart LR
     DP["Desktop Proxy"]
     SM["Sandbox Manager"]
     BR["gateway-bridge<br/>（无密钥）"]
+    EP["Egress Proxy<br/>allowlist / 日志"]
 
     GUI --> D
     D --> KC
@@ -34,7 +35,9 @@ flowchart LR
     DT --> WS
   end
 
-  H -->|"HTTP: gateway:8080"| BR
+  H -->|"model / MCP / git"| BR
+  H -->|"HTTP(S)_PROXY"| EP
+  EP -->|"allowlist"| NET["Internet"]
   DP -->|"noVNC ws"| DT
   SM --> H
   MG -->|"real key"| UP["模型 API"]
@@ -43,9 +46,9 @@ flowchart LR
 
 三个关键点：
 
-1. **沙箱没有互联网**，只有到 `gateway:8080` 的内部路由。
+1. **沙箱可以上网，但只能经 egress proxy**；没有默认路由，不能直连 IP/DNS。
 2. **沙箱里只有 per-sandbox token**，没有真实 key。
-3. **真实 key 只在宿主**：Keychain + daemon + 宿主侧 MCP server。
+3. **真实 key 只在宿主**：Keychain + daemon + 宿主侧 MCP server；认证流量走 gateway，不走 proxy。
 
 ## 2. 组件职责
 
@@ -59,7 +62,8 @@ flowchart LR
 | Desktop Proxy | 宿主 | noVNC WebSocket 代理 + 一次性 ticket | 不暴露到 LAN |
 | Sandbox Manager | 宿主 | 创建/启动/停止/删除沙箱，渲染配置 | 不挂宿主目录 |
 | gateway-bridge | 宿主容器 | 把内部网络的 HTTP 转发到 daemon 的 UDS | 不持有任何密钥 |
-| Sandbox | 不可信 | 跑 harness、桌面、workspace | 没有 key、没有互联网 |
+| Egress Proxy | 宿主容器 | 双网卡；未认证互联网流量经此，按域名 allowlist 放行 | 不做 TLS MITM、不注入凭证 |
+| Sandbox | 不可信 | 跑 harness、桌面、workspace | 没有 key；只有 proxy/gateway 路由 |
 | MCP Server | 宿主 | 实际执行 MCP tool；持有自己的凭证 | 不把凭证写回沙箱 |
 
 ## 3. 信任边界
@@ -76,7 +80,7 @@ flowchart LR
 - **Colima**（Apache-2.0）：在 macOS Apple Silicon 上跑一个 Linux VM（Lima/vz），提供 Docker API。
 - **Docker**：每个 sandbox 一个容器；容器共享 Colima VM 内核。
 - **镜像**：Ubuntu ARM64 + Xfce + Xvfb + noVNC + 常用 CLI（git、node、python、ripgrep）。
-- **隔离故事**：容器是内层，Colima VM 是外层；不挂宿主目录、不挂 Docker socket、不挂 Keychain；没有互联网。
+- **隔离故事**：容器是内层，Colima VM 是外层；不挂宿主目录、不挂 Docker socket、不挂 Keychain；网络经 egress proxy，认证经 gateway。
 
 为什么不是 Docker Desktop：商业使用需要订阅；Colima 是 Apache-2.0，本地优先。  
 为什么不是 microVM：microsandbox / Apple `container` 更未来，但 beta / 桌面 / IPC 有不确定性；v1 先用 Colima 保交付，`SandboxProvider` 留好替换点。
@@ -225,32 +229,100 @@ GUI:     iframe / 新标签打开，带一次性 ticket
 - GUI 永不显示明文；只显示 fingerprint 末四位。
 - 删除 key：删 Keychain item + 标记 metadata；下一次调用失败。
 
-## 8. 网络与端口
+## 8. 网络
+
+### 8.1 三种模式
+
+| 模式 | 沙箱路由 | 适用场景 | 默认 |
+|---|---|---|---|
+| `offline` | 仅 `gateway` | 敏感仓库、演示、完全不需要外网 | |
+| `filtered` | 仅 `egress-proxy`（域名 allowlist） | 日常开发：包安装、公开文档、公开 git | ✅ |
+| `open` | `egress-proxy`（全部放行） | 需要访问长尾站点；有数据外发风险 | |
+
+模式在启动时选择；v1 改变模式需要重建沙箱。
+
+### 8.2 拓扑
 
 ```text
-Host
+Host / Colima VM
   nullkeyd
-    ├── 127.0.0.1:<api-port>      GUI / REST
-    ├── unix socket               gateway-bridge → daemon
-    └── 127.0.0.1:<desktop-port>  noVNC proxy
+    ├── 127.0.0.1:<api>           GUI / REST
+    ├── UDS                       gateway-bridge
+    └── 127.0.0.1:<desktop>       noVNC proxy
 
-Docker internal network: nullkey-net
-  ├── gateway-bridge:8080         （无密钥，只转发到 daemon UDS）
-  └── sandbox                    （只能访问 gateway:8080）
+nullkey-internal (internal=true，无外网网关)
+  ├── gateway-bridge:8080         → daemon UDS（模型 / MCP / git）
+  ├── egress-proxy:3128           → 互联网（仅未认证流量）
+  └── sandbox                     （只能访问 gateway / proxy）
+
+nullkey-egress (bridge，有外网)
+  └── egress-proxy（第二块网卡）   → Internet
 ```
 
-- `nullkey-net` 使用 Docker `internal` 网络：没有默认路由，没有互联网，只有容器间通信。
-- 沙箱的 `/etc/hosts` 或 Docker DNS 解析 `gateway` → bridge。
-- 沙箱默认不发布端口；只有 noVNC 通过 Docker 的 `127.0.0.1:<random>` 映射暴露，Desktop Proxy 加一次性 ticket。
-- daemon 的 API 只绑 `127.0.0.1`；GUI 不需要远程访问。
-- 所有出站（模型、MCP、OAuth）都由宿主侧发起。
+- 沙箱只接 `nullkey-internal`；该网络没有默认路由，唯一可达的是 `gateway` 和 `proxy`。
+- `egress-proxy` 双网卡；只有它有外网。
+- 沙箱环境：`HTTP_PROXY/HTTPS_PROXY=http://proxy:3128`、`NO_PROXY=gateway,localhost`。
+- DNS：沙箱不配置外网 DNS；proxy 负责解析目标域名。内部名由 Docker DNS 解析。
+- 除 noVNC 外，v1 不发布 sandbox 端口；noVNC 通过 `127.0.0.1:<random>` 映射 + 一次性 ticket。
+
+### 8.3 强制与绕过
+
+- `internal` 网络没有外部网关：直连公网 IP、直连外部 DNS 都失败。
+- 不读取 proxy 环境的程序会直接失败（fail closed），不会"绕过"。
+- v1.1 可在 sandbox 内用 iptables 把 80/443 REDIRECT 到 proxy，兼容不识别 proxy 的程序（需要 `NET_ADMIN`）。
+- **代理不做 TLS MITM**：HTTPS 走 CONNECT 隧道，只能看到目标 host/SNI，不能改 header，因此**不能注入凭证**。
+- 认证流量必须走 gateway：模型、MCP、git。
+
+### 8.4 认证流量
+
+| 流量 | 路径 | 凭证位置 |
+|---|---|---|
+| 模型 API | `gateway/{anthropic,openai}` | Keychain → gateway |
+| MCP | `gateway/mcp/<id>` | Keychain → 宿主 MCP server |
+| Git（HTTPS） | `gateway/git/<provider>/<owner>/<repo>.git` | Keychain → gateway |
+| 包管理器 | `proxy` → registry | 无（公开 registry） |
+| 公开网页/git clone | `proxy` | 无 |
+| 私有 `git push` | gateway git proxy | Keychain → gateway |
+| 其他认证 CLI（gh/aws） | v1 不支持 | 后续 credential helper |
+| SSH git | v1 不支持 | 用 HTTPS remote |
+
+**Git smart HTTP proxy**（v1 Should）：
+
+```text
+sandbox:
+  git remote set-url origin http://gateway:8080/git/github/alice/demo.git
+
+gateway:
+  /git/github/alice/demo.git → https://github.com/alice/demo.git
+  注入 Authorization: Bearer <real token>
+  透传 info/refs、git-upload-pack、git-receive-pack
+```
+
+- 支持 clone / fetch / push；策略绑定 repo。
+- token 不进入 sandbox；git 配置里只有 gateway URL + per-sandbox token。
+- 需要处理重定向、chunked、大包体；Go `httputil.ReverseProxy` 可覆盖大部分。
+
+### 8.5 策略与日志
+
+- `filtered` 默认 allowlist：npm、PyPI、GitHub、常见文档站；可按沙箱编辑。
+- `open` 全部放行，GUI 显示警告。
+- 代理日志：时间、host/SNI、字节数、状态；不记录内容。
+- 限流/大小限制；异常目标告警。
+- 审计事件记录 mode、目标、是否放行。
+- v1 代理实现：Squid（成熟）或自写 Go CONNECT proxy；只做 host/SNI allowlist，不做 MITM。
+
+### 8.6 边界
+
+- **网络不是 key 控制**：key 控制在 gateway；沙箱有网也拿不到 key。
+- `filtered` 降低数据外泄面；`open` 允许外发；prompt injection / 恶意 Agent 不在威胁模型内。
+- 浏览器登录后的 cookie 是另一类凭证；v1 建议只做公开浏览，登录态需要单独设计（临时 profile、停止即删、或禁用）。
 
 ## 9. 数据模型与 API
 
 ```sql
 credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, base_url, header_name, oauth_status, oauth_expires_at, created_at, last_used_at, status)
 mcp_connections(id, server_id, label, auth_type, keychain_account, config_json, status)
-sandboxes(id, harness_id, status, token_hash, container_id, desktop_port, created_at, last_used_at)
+sandboxes(id, harness_id, status, network_mode, token_hash, container_id, desktop_port, created_at, last_used_at)
 audit_events(id, ts, sandbox_id, type, detail_json)
 ```
 
@@ -276,7 +348,7 @@ POST   /api/mcp/connections          {server_id,label,auth_type,value,config}
 POST   /api/mcp/connections/:id/test
 DELETE /api/mcp/connections/:id
 
-POST   /api/sandboxes                {harness_id}
+POST   /api/sandboxes                {harness_id,network_mode}
 POST   /api/sandboxes/:id/stop
 DELETE /api/sandboxes/:id
 GET    /api/sandboxes/:id/desktop
@@ -322,7 +394,7 @@ GET    /api/audit
 
 - 容器：非 root、只读 rootfs、`/tmp` tmpfs、`cap-drop ALL`、`no-new-privileges`、pids/memory 限制。
 - 不挂：宿主目录、`~/.ssh`、`~/.aws`、`~/.config/gh`、Keychain、Docker socket。
-- 网络：internal only；无 DNS 外网；只有 `gateway`。
+- 网络：internal 无默认路由；只有 `gateway` 与 `egress-proxy`；认证流量走 gateway。
 - 镜像：固定 digest；无 secret layer；`gitleaks` 扫描；最小化。
 - 日志：统一 redaction；不记录 body；MCP stderr 捕获。
 - core dump：沙箱内禁用；宿主 daemon 也禁用（避免内存里的 key 落盘）。

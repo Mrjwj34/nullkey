@@ -48,7 +48,7 @@
 | [1Password `op run` / secret references](https://developer.1password.com/docs/cli/secret-references/) | 脚本写 `op://...`，运行时解析 | "引用而非值"的 UX 先例；假设进程可信 |
 | [Vault Agent Injector](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/injector) | 把密钥注入 Pod | 反例：密钥进了工作负载 |
 | git credential helper / ssh-agent | 不持有长期 key，只拿能力 | 未来 CLI 的方向 |
-| [Claude Code sandbox](https://code.claude.com/docs/en/sandboxing) | 文件系统隔离 + 网络代理 allowlist | 业界同款"默认断网 + 代理" |
+| [Claude Code sandbox](https://code.claude.com/docs/en/sandboxing) | 文件系统隔离 + 网络代理 allowlist | 同款"网络代理 + allowlist"思路 |
 | [MCP Security Best Practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices) | confused deputy、token passthrough | 宿主侧网关防 confused deputy |
 | [The lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) | 私有数据 + 不可信内容 + 外发 = 泄漏 | 不在范围内；产品只解决 key 泄漏 |
 
@@ -64,6 +64,15 @@
 **结论**：完整 OAuth 是 3–5 天的独立子项目；v1 做"广谱静态 key + 宿主登录导入（实验）"，完整流程放 v1.1。
 
 参考：[Claude Code LLM gateway](https://code.claude.com/docs/en/llm-gateway-connect) · [Codex repo](https://github.com/openai/codex) · [MCP client registration](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization/client-registration)
+
+### 2.6 网络代理
+
+- 沙箱可以有互联网，只要**真实 key 不在沙箱**；网络不是 key 控制点。
+- 代理只做 CONNECT 隧道（不 MITM、不装 CA），按 host/SNI allowlist 放行；未认证流量（包管理器、公开文档、公开 git）直接可用。
+- 认证流量走 gateway（模型/MCP/git），不经过通用代理，因此不需要 header 注入或 TLS 拦截。
+- 参考实现：Squid（成熟、allowlist 简单）、Envoy（可编程、但 forward proxy 配置更重）；v1 用 Squid 或自写 Go proxy。
+
+**取舍**：`filtered` 默认覆盖 npm/PyPI/GitHub/文档站；`open` 给长尾需求；`offline` 给敏感仓库。数据外泄不在威胁模型内，但仍用 allowlist 降低误伤。
 
 ## 3. 底座对比
 
@@ -110,7 +119,7 @@
 1. **key 不能放 env**：session 泄漏第一条就是 `env`/transcript。
 2. **base URL + per-sandbox token 足够覆盖主流 harness**：不需要模型学习占位符。
 3. **有凭证的 MCP 必须宿主侧运行**：MCP server 自己需要 token，放沙箱就破功。
-4. **默认断网**：沙箱只留 gateway 一条路；这比"允许上网 + 代理"简单得多。
+4. **默认 filtered**：互联网经 egress proxy（域名 allowlist），认证经 gateway；网络与 key 隔离是正交的，不必为了安全把沙箱做成断网。
 5. **per-sandbox token**：可撤销、可审计、不是长期密钥；泄漏影响有限。
 6. **OAuth 是产品缺口**：订阅用户多，v1 以 API key 为主、订阅登录只做实验性导入；需要在文档和产品页明确。
 7. **不要过度承诺**：prompt injection、恶意 Agent、上游劫持都不在范围；把"session 泄漏"讲透。

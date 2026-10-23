@@ -31,7 +31,7 @@
 | 2 | 密钥模型 | 全局 key + 每个沙箱独立的 per-sandbox token，可单独撤销、单独审计 | 全局 key 是能力共享，不是密钥共享；token 泄漏影响有限 |
 | 3 | 虚拟桌面 | noVNC 只绑 `127.0.0.1`，一次性 ticket；剪贴板/文件传输默认关闭 | 桌面是最大的人工带出通道，默认收敛 |
 | 4 | MCP 覆盖 | 宿主侧 MCP Gateway + 精选 catalog；v1 先做 2–3 个 | 架构可泛化，但适配器要逐个做 |
-| 5 | 隔离 | 沙箱默认无互联网，只能访问网关 | 最强的 session 泄漏防线，也简化网络策略 |
+| 5 | 网络 | 三档：`offline` / `filtered`（默认）/ `open`；互联网只经 egress proxy，认证只经 gateway | 兼容真实开发（包安装、公开文档、git），同时不把 key 放进沙箱 |
 | 6 | Harness 覆盖 | v1 保证 Claude Code；Codex / DSH 作为 Should | 配置注入都能做，但联调时间要留够 |
 | 7 | GUI 形态 | 本地 Web GUI 优先，Tauri 外壳放 v1.1 | 三天内把时间花在安全链路，不花在签名/打包/WebView 兼容 |
 
@@ -70,7 +70,7 @@ OAuth 不是一个开关，至少有三层：
 2. 添加一个模型 key：Anthropic / OpenAI / DeepSeek；点"测试连接"。如果已有 Claude Code / Codex 登录，可以点"导入宿主登录"（实验）。
 3. 看到 harness 卡片：Claude Code（未安装）→ 点"安装"；宿主下载、校验、缓存。
 4. 连接 MCP：GitHub → 粘贴 fine-grained token（或后续 OAuth）→ 测试。
-5. 点"启动"→ 选择 Claude Code → 30 秒内进入沙箱桌面。
+5. 点"启动"→ 选择 Claude Code 和网络模式（默认 `filtered`）→ 30 秒内进入沙箱桌面。
 6. 在桌面里用 Claude Code；模型和 GitHub 都可用。
 
 ### 日常使用
@@ -94,7 +94,7 @@ OAuth 不是一个开关，至少有三层：
 | Sandbox | 状态、桌面、日志、审计、"扫描密钥" | 打开桌面、停止、删除 |
 | Keys | 全局 key 列表（provider、label、last used、auth type） | 添加、导入宿主登录、测试、删除；**永不显示明文** |
 | MCP | catalog + 已连接 server | 连接、测试、启用/禁用 |
-| Settings | 资源、保留策略、网络、高级 | 默认值即可，不暴露 YAML |
+| Settings | 网络模式、资源、保留策略、高级 | 默认 `filtered`；不暴露 YAML |
 | Audit | 沙箱/凭证/MCP 事件 | 过滤、导出 |
 
 交互原则：
@@ -108,7 +108,7 @@ OAuth 不是一个开关，至少有三层：
 
 ### Must（三天）
 
-- 本地 GUI + daemon 骨架；Colima/Docker 沙箱 + 虚拟桌面。
+- 本地 GUI + daemon 骨架；Colima/Docker 沙箱 + 虚拟桌面；egress proxy + `filtered` 默认。
 - Keychain 全局密钥：添加、测试、删除；provider registry 覆盖 8–10 个模型 provider + 通用 auth 类型。
 - 模型网关：per-sandbox token → 真实 key；Claude Code 跑通。
 - 宿主侧 MCP 网关 + GitHub MCP；沙箱配置零敏感信息。
@@ -120,6 +120,7 @@ OAuth 不是一个开关，至少有三层：
 - Codex、DSH 适配。
 - Codex/Claude 宿主登录导入（实验）。
 - 第二个 MCP（Filesystem 或 Slack）。
+- Git smart HTTP proxy（私有 repo clone/push）。
 - Key 轮换、审计导出、Tauri 外壳。
 - 沙箱资源限制、空闲自动停止。
 

@@ -219,6 +219,25 @@ sandbox: nullkey-mcp-bridge
 - 可以静态编译，放进只读镜像。
 - 超时/重连/错误码要可观测。
 
+### 5.5 Harness 的网络行为
+
+沙箱默认 `filtered`：未认证流量经 egress proxy，认证流量经 gateway。
+
+| 行为 | 是否可用 | 说明 |
+|---|---|---|
+| `npm install` / `pip install` / `cargo` / `go get` | ✅ | 走 proxy；默认 allowlist 覆盖主流 registry |
+| 公开文档/网页浏览 | ✅ | 走 proxy；建议只做公开浏览 |
+| `git clone` 公开 repo | ✅ | 走 proxy |
+| `git clone/push` 私有 repo | ✅（v1 Should） | remote 指向 `gateway/git/...`；token 不进沙箱 |
+| 带认证的 `curl`/SDK | ❌ | 沙箱里没有 key；用 MCP/tool 或 gateway |
+| `gh` / `aws` 等认证 CLI | ❌ v1 | 需要 credential helper；避免 token 进沙箱 |
+| SSH git | ❌ v1 | 用 HTTPS remote |
+
+- 沙箱环境：`HTTP_PROXY/HTTPS_PROXY=http://proxy:3128`、`NO_PROXY=gateway,localhost`。
+- 不识别 proxy 的程序会失败（fail closed）；v1.1 用 iptables REDIRECT 兼容。
+- 浏览器登录后的 cookie 是凭证；v1 建议只公开浏览，登录态需要单独设计。
+- 私有 git 的 remote 示例：`http://gateway:8080/git/github/<owner>/<repo>.git`。
+
 ## 6. OAuth
 
 ### 6.1 v1：只做宿主登录导入
