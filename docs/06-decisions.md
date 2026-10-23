@@ -186,7 +186,7 @@
 - v1.1 增加 **Host Tool Gateway**：沙箱内 shim → 宿主 gateway；argv 数组、allowlist、sanitized env、cwd=workspace、审批/审计，不经过 `sh -c`。
 - 增加 **Service Supervisor**：按 manifest 启动/停止服务，健康检查，端口登记，生成式/网关代理认证；用户经 service tunnel 访问。
 - Terraform 走 Host Tool Gateway（推荐）或沙箱内短期凭证模式；`apply` 绑定 plan hash 并审批，`destroy` 默认拒绝。
-- 不把宿主服务/任意端口暴露给沙箱；native runtime 的 loopback 共享限制在 [host-tools-and-services.md](host-tools-and-services.md) 说明。
+- 不把宿主服务/任意端口暴露给沙箱；native runtime 的 loopback 共享限制在 [13-host-tools-and-services.md](13-host-tools-and-services.md) 说明。
 
 **Consequences**：
 

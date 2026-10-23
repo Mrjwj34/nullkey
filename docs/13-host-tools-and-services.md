@@ -1,4 +1,4 @@
-# 宿主 CLI、沙箱服务与 Terraform
+# 13 · 宿主 CLI、沙箱服务与 Terraform
 
 > 状态：v1.1 设计。v1 kernel 不实现 Host Tool Gateway / Terraform；Service Supervisor 为 v1 Should。
 > 本文不修改 `api/openapi.yaml`；v1.1 落地前先补 API 契约与 ADR，避免动到已冻结的 GUI 契约。
@@ -199,45 +199,3 @@ Terraform 的 `init/plan` 是命令，不是长驻服务；由 host tool 或 san
 | Terraform host-side plan/apply | v1.1 |
 | Terraform sandbox + short-lived creds | v1.1 |
 | 任意宿主 CLI / 任意端口 | 不做 |
-
-## 9. API 草案（v1.1，不进当前冻结的 OpenAPI）
-
-Host Tool Gateway：
-
-```http
-GET  /tools
-→ 200 { "items": [{ "id": "terraform", "installed": true }] }
-
-POST /tools/{id}/exec
-{ "argv": ["plan", "-out", "tfplan"], "cwd": "/workspace", "timeout_ms": 120000 }
-→ 200 {
-  "execution_id": "exec_123",
-  "exit_code": 0,
-  "stdout": "...",
-  "stderr": "...",
-  "approval": null
-}
-
-POST /tools/{id}/executions/{execution_id}/approve
-{ "decision": "allow_once", "argv_hash": "..." }
-→ 200 { "ok": true }
-```
-
-Service Supervisor：
-
-```http
-POST /sandboxes/{id}/services
-{ "id": "dsh-web", "command": "dsh", "args": ["web", "--port", "7860"],
-  "ports": [{ "port": 7860, "protocol": "http" }],
-  "health": { "path": "/", "timeout_ms": 30000 } }
-→ 201 { "id": "dsh-web", "status": "starting" }
-
-GET  /sandboxes/{id}/services/{service_id}/logs?tail=200
-→ 200 { "lines": ["..."] }
-
-POST /sandboxes/{id}/services/{service_id}/stop
-→ 200 { "ok": true }
-```
-
-- v1.1 落地前先补 ADR + 与 GUI 团队确认，再改 `docs/08` 与 `api/openapi.yaml`。
-- 不在本 PR 修改 OpenAPI。
