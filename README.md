@@ -4,7 +4,7 @@
 >
 > A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
-**Status:** design phase · macOS Apple Silicon · 3-day MVP
+**Status:** design phase · Go kernel skeleton · API draft (freeze after interaction acceptance) · macOS Apple Silicon · 3-day MVP
 
 ## 为什么
 
@@ -146,7 +146,9 @@ token 不进入 sandbox
 - [08 · API 契约](docs/08-api-contract.md) · [OpenAPI](api/openapi.yaml)
 - [09 · 服务隧道与产物审查](docs/09-service-tunnel.md)
 - [10 · 交互契约与 GUI 验收](docs/10-interaction-contract.md)
-- [宿主 CLI / 沙箱服务 / Terraform（v1.1）](docs/host-tools-and-services.md)
+- [11 · Kernel 实施计划（Go）](docs/11-kernel-implementation-plan.md)
+- [12 · 验收断言](docs/12-acceptance.md)
+- [13 · 宿主 CLI / 沙箱服务 / Terraform（v1.1）](docs/13-host-tools-and-services.md)
 - [SLO](slo.md)
 
 ## 三天 MVP
@@ -159,13 +161,42 @@ Must：
 - 模型 gateway + 一个真实 MCP（GitHub）+ egress proxy。
 - 持久化 workspace；API 契约冻结；SLO 基线。
 
-Should：Claude Code / DSH、MCP OAuth DCR、桌面 runtime/Codex app、Service tunnel + Artifacts、第二个 MCP。
+Should：Claude Code / DSH、MCP OAuth DCR、桌面 runtime/Codex app、Service Supervisor + tunnel + Artifacts、第二个 MCP。
 
-Won't：默认 VM、Windows/Linux host、多租户、完整桌面 catalog。
+Won't：默认 VM、Windows/Linux host、多租户、完整桌面 catalog、Host Tool Gateway/Terraform（v1.1）。
 
 ## 开发
 
-TBD（docs-first，代码随后）。
+```bash
+make check      # gofmt / vet / unit / OpenAPI contract / build / acceptance compile
+make test       # go test ./...
+make build      # bin/nullkeyd
+make run        # 启动 control-plane（loopback only）
+make acceptance-ci  # 黑盒验收：已实现断言执行，未实现项 skip
+make acceptance     # 严格验收（里程碑 gate）
+make release-product  # release-only：产品能力断言
+make release-slo      # release-only：SLO gate（P9 前预期失败）
+make release-check    # 产品能力 + SLO
+```
+
+普通 PR CI 只跑 static/build/unit/acceptance/contract；`.github/workflows/release.yml`
+在 GitHub Release 发布时额外运行产品能力断言与 SLO gate，不作为 PR 检查项。
+
+- Kernel 计划：[docs/11-kernel-implementation-plan.md](docs/11-kernel-implementation-plan.md)
+- 验收断言：[docs/12-acceptance.md](docs/12-acceptance.md)
+- 交互契约：[docs/10-interaction-contract.md](docs/10-interaction-contract.md)
+- GUI 协作边界：只通过 [api/openapi.yaml](api/openapi.yaml)
+- Agent 规则：[AGENTS.md](AGENTS.md)
+
+本地运行：
+
+```bash
+NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
+  go run ./cmd/nullkeyd --listen 127.0.0.1:49152
+curl -s http://127.0.0.1:49152/api/v1/health
+```
+
+未设置 `NULLKEY_DAEMON_TOKEN` 时，daemon 生成/复用 `<NULLKEY_HOME>/daemon-token`（0600）。
 
 ## License
 

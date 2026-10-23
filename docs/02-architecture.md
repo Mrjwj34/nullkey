@@ -50,7 +50,7 @@ flowchart LR
 2. **Nullkey 只向沙箱注入 per-sandbox token**；其管理的真实凭证只在 Keychain + gateway；用户自带文件不受这一保证覆盖。
 3. **网络与凭证正交**：未认证流量经 egress proxy；认证流量经 gateway。沙箱有网也拿不到 key。
 
-> 这张图只画 v1 的凭证路径。宿主 CLI（gh/aws/kubectl/terraform）和沙箱内长驻服务属于 v1.1/Should 扩展，见 [host-tools-and-services.md](host-tools-and-services.md)；不改变"凭证不进沙箱"的原则。
+> 这张图只画 v1 的凭证路径。宿主 CLI（gh/aws/kubectl/terraform）和沙箱内长驻服务属于 v1.1/Should 扩展，见 [13-host-tools-and-services.md](13-host-tools-and-services.md)；不改变"凭证不进沙箱"的原则。
 
 ## 2. 组件职责
 

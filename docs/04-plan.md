@@ -22,7 +22,7 @@
 - MCP OAuth（DCR）。
 - 私有 Git smart HTTP proxy。
 - 可选 desktop runtime + Codex app。
-- Service tunnel + Artifacts 审查。
+- Service Supervisor + tunnel + Artifacts 审查。
 - 第二个 MCP（Slack/Notion）。
 - 状态只读共享、快照/回滚。
 

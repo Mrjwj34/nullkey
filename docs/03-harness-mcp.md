@@ -113,7 +113,7 @@ export ANTHROPIC_AUTH_TOKEN="<per-sandbox-token>"
 
 ## 4.1 宿主 CLI / Terraform（v1.1）
 
-`gh` / `aws` / `kubectl` / `terraform` 不把宿主配置挂进沙箱，而是通过 Host Tool Gateway 的 shim 执行；Terraform 的 plan/apply 需要审批。设计见 [host-tools-and-services.md](host-tools-and-services.md)。
+`gh` / `aws` / `kubectl` / `terraform` 不把宿主配置挂进沙箱，而是通过 Host Tool Gateway 的 shim 执行；Terraform 的 plan/apply 需要审批。设计见 [13-host-tools-and-services.md](13-host-tools-and-services.md)。
 
 ## 5. 桌面端 catalog（Should）
 

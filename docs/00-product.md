@@ -104,7 +104,7 @@ OAuth 是 v1 的核心能力：
 - Claude Code / DSH。
 - MCP OAuth（DCR）。
 - 可选 desktop runtime + Codex app。
-- Service tunnel + Artifacts 审查。
+- Service Supervisor + tunnel + Artifacts 审查。
 - 第二个 MCP（Slack/Notion）。
 - 状态共享的只读模式、快照/回滚。
 

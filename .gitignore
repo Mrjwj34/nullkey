@@ -29,3 +29,11 @@ bin/
 *.dmg
 *.pkg
 *.app/
+
+# Coverage / profiling
+coverage.out
+*.coverprofile
+*.prof
+
+# Root-level accidental build output
+/nullkeyd
