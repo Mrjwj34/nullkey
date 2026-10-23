@@ -105,7 +105,7 @@
 | 2:10 | 撤销 | GUI 停止沙箱；桌面里的请求失败；重启后新 token。 |
 | 2:25 | 扫描 | 点"扫描密钥"→ 0 命中。 |
 | 2:35 | 架构 | 一张图：key 在 Keychain，网关注入，沙箱只有 token。 |
-| 2:50 | 边界 | "我们不防 prompt injection；我们保证 key 不在沙箱。" |
+| 2:50 | 边界 | "Nullkey 不防 prompt injection；保证 key 不在沙箱。" |
 | 3:00 | 结束 | "Session 可以泄漏，key 不会。" |
 
 演示前：

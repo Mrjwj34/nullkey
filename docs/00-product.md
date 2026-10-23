@@ -49,7 +49,7 @@ OAuth 不是一个开关，至少有三层：
 
 - 广谱 API key/token（见 README）。
 - 实验性"导入宿主登录"：
-  - **Codex**：读取宿主 `~/.codex/auth.json`（用户授权），存 Keychain；网关注入；刷新按 Codex 公开实现适配。
+  - **Codex**：读取宿主 `~/.codex/auth.json`（用户授权，路径以版本为准），存 Keychain；网关注入；刷新按 Codex 公开实现适配。
   - **Claude Code**：优先用 `claude setup-token` 生成长期 token（若当前版本支持），或读取宿主 Keychain 中已有的登录；过期后重新导入。
   - 沙箱内永远不发起登录，登录 token 永远不进沙箱。
 - 明确标注"实验性"，不承诺所有 provider/版本。
