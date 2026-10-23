@@ -43,7 +43,7 @@
 | B · 安全/网关 | Keychain、模型 gateway、OAuth broker、MCP gateway、token | `nullkeyd` 核心、OAuth、审计 |
 | C · 网络/适配/演示 | egress proxy、Codex 适配、GitHub MCP、SLO/演示 | 适配器、proxy、benchmark、演示脚本 |
 
-第 1 小时冻结：API 契约、`Runtime` 接口、token 格式、错误码。
+第 1 小时对齐：API 草案、`Runtime` 接口、token 格式、错误码；完成 [交互验收](10-interaction-contract.md) 后冻结 GUI 契约。
 
 ## 3. 排期
 
@@ -51,7 +51,7 @@
 
 | 时间 | A | B | C |
 |---|---|---|---|
-| 09:00–10:00 | API 契约冻结、仓库骨架 | 同左 | 同左 |
+| 09:00–10:00 | API 草案对齐、仓库骨架 | 同左 | 同左 |
 | 10:00–12:00 | Seatbelt profile、PTY、Terminal WebSocket | Keychain helper、daemon 骨架 | Codex 安装/配置模板、egress proxy 骨架 |
 | 12:00 | **Gate 1：Terminal 能进 shell；Seatbelt 阻止读宿主 home/Keychain** | | |
 | 13:00–18:00 | Sandbox 生命周期、workspace/state、token env | 模型 gateway + OAuth broker 骨架 | Codex 跑通 API key；网络 `filtered` |
@@ -89,7 +89,7 @@
 | G2 OAuth/MCP | D2 12:00 | Codex OAuth + GitHub MCP 可用；配置无 secret | OAuth 降级为 API key + 导入；MCP 先 Filesystem |
 | G3 演示 | D3 12:00 | Must 全过；SLO 达标；3 分钟不超时 | 砍 Claude/DSH、Git proxy、desktop |
 
-**不要赌**：Seatbelt network 规则 2 小时验证不通，就退回"proxy + token + 威胁模型"（不做端口级强隔离），继续主线。
+**不要赌**：Seatbelt network 规则 2 小时验证不通，记录 runtime 阻塞并缩减可交付范围；无法执行声明策略的模式不对 GUI 报告可用，不静默退回更弱隔离。
 
 ## 5. 演示脚本（3 分钟）
 
@@ -104,10 +104,10 @@
 | 1:45 | 沙箱检查 | `env`、`cat ~/.codex/config.toml`、`grep -R "sk-"`：只有 token。 |
 | 2:00 | 持久化 | 停止 → 重启：workspace/state 还在；token 已轮换。 |
 | 2:15 | 撤销 | 撤销 Codex 凭证 → 下一次调用失败。 |
-| 2:30 | 扫描 | "扫描凭证" → 0 命中；Artifacts 打开 diff。 |
+| 2:30 | 检查 | “生成配置/环境凭证检查” → 0 命中，展示范围/排除项/时间；Artifacts 打开 diff。 |
 | 2:40 | 架构 | key 在 Keychain，gateway 注入，沙箱只有 token。 |
-| 2:50 | 边界 | "不防 prompt injection；保证凭证不在沙箱。" |
-| 3:00 | 结束 | "Session 可以泄漏，key 不会。" |
+| 2:50 | 边界 | “不防 prompt injection；Nullkey 管理的凭证不注入沙箱，项目自带秘密仍需保护。” |
+| 3:00 | 结束 | “把凭证留在宿主，把工作留在沙箱。” |
 
 演示前：
 
@@ -120,7 +120,7 @@
 
 | 风险 | 概率 | 影响 | 预案 |
 |---|---|---|---|
-| Seatbelt network 规则不够细 | 中 | 高 | 先做 proxy + token；端口级隔离放 v1.1 |
+| Seatbelt network 规则不够细 | 中 | 高 | 不宣称对应模式可用；启动失败关闭，重新评估 runtime 范围 |
 | PTY/终端兼容性 | 中 | 中 | 用 xterm.js + `creack/pty`；先保 shell，再保 Codex |
 | Codex 配置字段变化 | 中 | 中 | 固定版本 + smoke test |
 | OAuth provider 限制/条款 | 中 | 高 | Codex 优先；失败降级 API key/导入 |
@@ -139,9 +139,9 @@
 - [ ] `filtered` 下 npm/公开文档可用；直连 IP 失败。
 - [ ] workspace/state 重启后还在；token 轮换。
 - [ ] 停止/撤销后调用失败。
-- [ ] 审计无凭证明文；扫描 0。
+- [ ] 审计无 Nullkey 管理的凭证明文；受控测试项目的凭证注入检查为 0，展示范围/排除项/时间。
 - [ ] SLO 基线达标（见 [slo.md](../slo.md)）。
-- [ ] API 契约与 GUI 对齐。
+- [ ] API 契约与 GUI 对齐；[交互验收](10-interaction-contract.md) 中关闭/重连、取消、清理和无障碍场景通过后冻结。
 - [ ] Service tunnel 能打开声明过的 WebUI；未声明端口不可达。
 - [ ] Artifacts 能看文件树/diff。
 

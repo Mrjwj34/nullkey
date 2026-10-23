@@ -1,8 +1,8 @@
 # Nullkey
 
-> 桌面级 Agent 安全沙箱。API key、OAuth token、password 永远不进入沙箱。
+> 桌面级 Agent 安全沙箱。Nullkey 管理的 API key、OAuth token、password 不注入沙箱。
 >
-> A desktop-grade secure sandbox for AI coding agents. Credentials never enter the sandbox.
+> A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
 **Status:** design phase · macOS Apple Silicon · 3-day MVP
 
@@ -10,16 +10,16 @@
 
 Agent session 会以很多方式离开本机：transcript、日志、环境变量、MCP 配置、工作区文件、崩溃转储、截图。只要真实凭证在沙箱里，任何一次 session 泄漏都可能变成 key 泄漏。
 
-Nullkey 把沙箱变成 **zero-secret zone**：
+Nullkey 将其管理的凭证与 Agent 运行环境分离：
 
-- 沙箱里没有 API key、password、OAuth token、SSH key。
+- Nullkey 不向沙箱写入其管理的 API key、password、OAuth token、SSH key。
 - 沙箱里的 harness / MCP 配置只有一枚 **per-sandbox token**（可撤销、只在当前沙箱有效）。
 - 真实凭证只在宿主机：macOS Keychain + Nullkey daemon。
 - 模型调用、MCP 调用、私有 git 都经过宿主侧 gateway，由 gateway 在沙箱外注入凭证。
 - 沙箱默认走 `filtered` 网络：未认证流量经 egress proxy，认证流量经 gateway。
 - 宿主机可通过 **service tunnel** 打开沙箱内 WebUI/preview；Agent 产物在 Artifacts 页审查。
 
-**即使整个沙箱状态被拿走，也拿不到真实凭证。**
+**Nullkey 不把其管理的真实凭证写入沙箱状态。** 用户项目里的 `.env`、导入文件和主动粘贴的内容可能自带凭证；凭证检查不保证整个项目可安全导出或分享。
 
 ## 轻量优先
 
@@ -93,6 +93,7 @@ token 不进入 sandbox
 - 用户选择 harness/app：Codex（Must）、Claude Code / DSH（Should）、Codex app 等桌面端（可选 catalog）。
 - Harness/app 不随安装包分发：宿主侧下载、固定版本/哈希、只读挂载或安装到缓存。
 - 全局凭证：OAuth（宿主侧 broker）或 API key；所有沙箱共用，按沙箱 token 隔离。
+- 关闭终端视图后任务继续，重新打开接回原会话；停止或删除沙箱保留 workspace/state，清理数据是独立操作。
 - 状态持久化：workspace、harness state、cache 默认持久化并可在沙箱间共享。
 - 所有配置由后端生成，用户不需要编辑 YAML 或在沙箱里填 key。
 
@@ -124,7 +125,7 @@ token 不进入 sandbox
 | 桌面端 | Codex app 等（可选 catalog） | 需 desktop runtime；默认不启动 |
 | MCP | GitHub、Filesystem、Slack、Notion、Postgres | 有凭证的宿主侧；Filesystem 沙箱侧；v1 先 2–3 个 |
 | Auth | **OAuth Broker** + API key | Codex OAuth 优先；MCP OAuth DCR；其他 provider 逐步 |
-| Network | `offline` / `filtered`（默认）/ `open` | egress proxy；认证走 gateway |
+| Network | `services_only` / `filtered`（默认）/ `open` | 仅已连接服务 / 限定网站 / 开放网站；三档都可经 gateway 联网，均非离线 |
 | State | 持久化 + 共享 | workspace / state / cache 三类 |
 | Services | WebUI/preview 隧道 | 只暴露声明服务；一次性 ticket |
 
@@ -144,6 +145,7 @@ token 不进入 sandbox
 - [07 · 状态、文件挂载与持久化](docs/07-state-and-mounts.md)
 - [08 · API 契约](docs/08-api-contract.md) · [OpenAPI](api/openapi.yaml)
 - [09 · 服务隧道与产物审查](docs/09-service-tunnel.md)
+- [10 · 交互契约与 GUI 验收](docs/10-interaction-contract.md)
 - [SLO](slo.md)
 
 ## 三天 MVP

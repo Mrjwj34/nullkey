@@ -73,6 +73,7 @@
 ## ADR-008 · GUI 不在本设计范围
 
 **Decision**：GUI/app 选型由独立团队负责；本仓库只冻结 API 契约、事件、终端协议。
+**修订**：契约冻结条件与交互验收由 ADR-018 补充。
 **Consequences**：
 
 - 后端与 GUI 可并行。
@@ -82,6 +83,7 @@
 ## ADR-009 · 网络默认 filtered
 
 **Decision**：三档网络 `offline` / `filtered`（默认）/ `open`；未认证流量经 egress proxy，认证流量经 gateway。
+**修订**：`offline` 的名称由 ADR-018 替换为 `services_only`；它从未代表完全离线。
 **Consequences**：
 
 - 包安装、公开文档、公开 git 可用。
@@ -162,6 +164,19 @@
 - GUI 可审查 Agent 产物；写操作仍走 harness。
 - 二进制/大文件只给元数据/下载。
 - 内容不进入模型 prompt。
+
+## ADR-018 · 交互语义与凭证保证边界
+
+**Context**：发布前评审发现网络名称、清理范围和终端生命周期不足以让 GUI 准确解释操作后果；扫描结果也不能支持“整个项目无凭证”的承诺。
+**Decision**：
+
+- `offline` 更名为 `services_only`（仅允许已连接服务）；模型/MCP/git 仍可联网，不保证数据留在本机。
+- 停止/删除 sandbox 保留 workspace/state；移除 workspace 默认保留文件。只有 managed 工作区可经独立确认删除磁盘文件；external 只解除关联。取消未定义的 workspace reset 和 sandbox 级联删除参数。
+- PTY 生命周期与视图分离，断线可接回同一 PTY；安装与 OAuth 支持取消并定义完成/取消竞争的结果。
+- 保证限定为 Nullkey 不注入所管理的凭证；凭证检查展示范围、排除项和时间，不为用户自带内容背书。
+- API 仍为发布前草案；按 [10](10-interaction-contract.md) 联调并对齐 OpenAPI 后冻结。新增字段/取消状态及移除项需同步 GUI mock；冻结后的破坏性变更升 `/api/v2`。
+
+**Consequences**：具体契约见 [07](07-state-and-mounts.md)、[08](08-api-contract.md)；启动测量以 WS ready 且输入启用为终点，另报 harness 就绪时间，见 [SLO](../slo.md)。本 ADR 修订 ADR-008/009/014/015 的相关交互语义。
 
 ## 已确认的产品决策
 

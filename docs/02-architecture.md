@@ -47,7 +47,7 @@ flowchart LR
 三个关键点：
 
 1. **默认 runtime 不是 VM**：原生 macOS 进程 + Seatbelt profile；启动快、内存低。
-2. **沙箱里只有 per-sandbox token**；真实凭证只在 Keychain + gateway。
+2. **Nullkey 只向沙箱注入 per-sandbox token**；其管理的真实凭证只在 Keychain + gateway；用户自带文件不受这一保证覆盖。
 3. **网络与凭证正交**：未认证流量经 egress proxy；认证流量经 gateway。沙箱有网也拿不到 key。
 
 ## 2. 组件职责
@@ -65,7 +65,7 @@ flowchart LR
 | OAuth Broker | 宿主 | PKCE、callback、refresh、Keychain | 不在沙箱内登录 |
 | Egress Proxy | 宿主 | CONNECT + 域名 allowlist，无 MITM | 不注入凭证 |
 | Desktop Runtime | 可选 | 虚拟桌面/桌面 app，按需启动 | 不进入默认 SLO |
-| Sandbox | 不可信 | 跑 harness、shell、workspace | 没有真实凭证 |
+| Sandbox | 不可信 | 跑 harness、shell、workspace | 不接收 Nullkey 注入的真实凭证；用户自带文件另计 |
 
 ## 3. 信任边界
 
@@ -89,7 +89,7 @@ flowchart LR
   - `deny default`；
   - 只允许读系统库、harness 安装目录、workspace/state/cache；
   - 沙箱 `HOME` 指向 state 目录；拒绝宿主 `$HOME`、`~/.ssh`、`~/.aws`、Keychain、`mach-lookup` 敏感服务；
-  - 允许 `network-outbound` 仅到 `127.0.0.1` 的 gateway/proxy 端口（端口级规则需在实现时验证；不支持则退回 proxy + token + 威胁模型）；
+  - 允许 `network-outbound` 仅到 `127.0.0.1` 的 gateway/proxy 端口（端口级规则需在实现时验证；无法执行声明策略则拒绝启动，不静默放宽）；
   - 允许执行白名单内的 harness/shell/git/npm。
 - 隔离级别：进程沙箱，不是 VM。能防 session 泄漏和误读宿主文件；不宣称防住 determined escape。
 
@@ -97,7 +97,7 @@ flowchart LR
 
 - 虚拟桌面/桌面 app 需要 GUI 环境；macOS 上运行 Linux GUI 需要轻量虚拟化。
 - 只在用户点"Open Desktop"时启动；单独计量，不计入默认 SLO。
-- 仍然没有真实凭证；网络经 proxy/gateway。
+- 不注入 Nullkey 管理的真实凭证；网络经 proxy/gateway。
 - 如果"完全不用虚拟化"是硬约束，v1 只交付 TUI，desktop 延后。
 
 ### 4.3 Provider 接口
@@ -123,7 +123,9 @@ type Runtime interface {
 - GUI 本身不是 TUI 风格；默认打开的是 **SSH-client 风格的 Terminal 页**。
 - 终端里运行的是 **harness 自己的 TUI**（Codex TUI、Claude Code TUI、DSH TUI）。
 - `Terminal Service` 用 PTY 启动 shell/harness，WebSocket 推流；前端用 xterm.js 渲染。
-- 支持 resize、复制、全屏、断线重连（可选）。
+- 支持 resize、复制、全屏、断线重连（Must）；PTY 归 daemon 管理，生命周期不绑定 WebSocket 或窗口。
+- 关闭/刷新视图、客户端断线不结束任务；重连接回同一 PTY。只有停止/删除 sandbox 或进程退出才结束会话；daemon 重启不能恢复原 PTY，GUI 明确提示重启后可恢复持久化会话。
+- v1 不保存服务器端 scrollback；重连触发 resize/SIGWINCH 请求 TUI 重绘，GUI 提示断线期间历史输出不可恢复。就绪信号和单写连接规则见 [终端契约](08-api-contract.md#37-terminal)。
 - Codex TUI 直接跑在 PTY 里；不需要虚拟桌面。
 - 桌面是独立 tab/window；打开时才创建 desktop runtime。
 - 终端内容不进入模型网关；只有 harness 自己发起的模型请求才走 gateway。
@@ -195,11 +197,13 @@ gateway: 注入真实凭证 → https://github.com/...
 
 ### 9.1 模式
 
-| 模式 | 沙箱路由 | 适用 |
+| 模式 | 用户名称 | 行为 |
 |---|---|---|
-| `offline` | 仅 gateway | 敏感仓库、演示 |
-| `filtered`（默认） | 仅 egress proxy（域名 allowlist） | 日常开发：npm/pip、公开文档、公开 git |
-| `open` | egress proxy 全放行 | 长尾站点，有数据外发风险 |
+| `services_only` | 仅允许已连接服务 | 禁用通用 egress；模型/MCP/私有 git 仍可经 gateway 联网 |
+| `filtered`（默认） | 限定网站 | gateway + egress 域名 allowlist，适合包安装、公开文档、公开 git |
+| `open` | 开放网站 | gateway + egress 全放行，适合长尾站点；仍有数据外发风险 |
+
+三档都不是离线模式，都可能通过模型/MCP/git 向外发送数据；GUI 在选项旁直接说明，不推荐 `services_only` 作为敏感数据不外发的保证。v1 不提供完全离线模式。模式是实际执行策略；无法执行时拒绝启动，不以同名模式静默放宽限制。
 
 ### 9.2 Native 网络拓扑
 
@@ -239,7 +243,7 @@ sandbox process (Seatbelt)
 ## 11. 数据模型（摘要）
 
 ```sql
-workspaces(id, name, root_path, mode, created_at, last_used_at)
+workspaces(id, name, root_path, storage_kind, mode, created_at, last_used_at)
 states(id, harness_id, path, created_at, last_used_at)
 sandboxes(id, harness_id, workspace_id, state_id, runtime, network_mode, status, token_hash, pid, created_at)
 credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, oauth_status, expires_at)
@@ -259,7 +263,7 @@ audit_events(id, ts, sandbox_id, type, detail_json)
 5. 返回 terminal WebSocket ticket；可选 desktop/service ticket。
 6. adapter 注册 WebUI/preview service；daemon 健康检查。
 7. 停止：撤销 token、停进程、释放锁；state/workspace 保留。
-7. 删除：删除 sandbox 记录；用户可选删 state/workspace。
+8. 删除：停止 sandbox 并删除其记录；始终保留 state/workspace；数据清理由独立接口执行。
 
 ## 13. 失败模式
 

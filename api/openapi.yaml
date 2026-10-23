@@ -3,7 +3,8 @@ info:
   title: Nullkey Local API
   version: 0.1.0
   description: |
-    Local-only API between the Nullkey daemon and GUI.
+    Draft local-only API between the Nullkey daemon and GUI.
+    Freeze after docs/10-interaction-contract.md acceptance checks.
     Base URL is bound to 127.0.0.1. All requests require a bearer token
     injected by the launcher. Terminal and service-tunnel WebSockets are
     documented as protocol extensions on their ticket endpoints.
@@ -122,6 +123,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{job_id}/cancel:
+    post:
+      tags: [harnesses]
+      summary: Cancel an installation job
+      description: |
+        Harness/app installs must be cancellable. Repeated requests return
+        the current cancelling/cancelled job. Cancellation and installation
+        commit are mutually exclusive. Completed or non-cancellable jobs
+        return 409. Cancelled means subprocesses stopped and temporary files
+        removed; previous installations and verified shared cache are kept.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Current cancellation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '409':
+          $ref: '#/components/responses/Conflict'
         default:
           $ref: '#/components/responses/Error'
 
@@ -251,7 +280,16 @@ paths:
           $ref: '#/components/responses/Error'
     delete:
       tags: [workspaces]
-      summary: Delete a workspace
+      summary: Remove a workspace, optionally deleting managed files
+      description: |
+        By default only remove the record, leaving all files intact.
+        delete_files=true is allowed only for storage_kind=managed and requires
+        confirm_name to match the workspace name. It irreversibly removes the
+        entire directory, including .git and uncommitted/untracked files.
+        External directories cannot be deleted here (400 invalid_request).
+        Any active sandbox reference, including read-only use, returns 409
+        state_locked. Reference checking and deletion are mutually exclusive
+        with sandbox startup. The GUI must show the full path and impact.
       parameters:
         - $ref: '#/components/parameters/PathId'
         - name: delete_files
@@ -259,31 +297,16 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: confirm_name
+          in: query
+          description: Required and must match the current name when delete_files=true.
+          schema:
+            type: string
       responses:
         '204':
           description: Deleted
-        default:
-          $ref: '#/components/responses/Error'
-
-  /workspaces/{id}/reset:
-    post:
-      tags: [workspaces]
-      summary: Reset workspace files (dangerous)
-      parameters:
-        - $ref: '#/components/parameters/PathId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [confirm]
-              properties:
-                confirm:
-                  type: boolean
-      responses:
-        '200':
-          description: Reset
+        '409':
+          $ref: '#/components/responses/Conflict'
         default:
           $ref: '#/components/responses/Error'
 
@@ -405,8 +428,19 @@ paths:
     delete:
       tags: [states]
       summary: Delete a state
+      description: |
+        Remove the state directory and record, including configuration,
+        sessions and history; preserve workspace files. The GUI must confirm
+        the path and data loss. Any active sandbox reference returns 409
+        state_locked; reference checking and deletion must exclude startup.
       parameters:
         - $ref: '#/components/parameters/PathId'
+        - name: confirm
+          in: query
+          required: true
+          schema:
+            type: boolean
+            enum: [true]
       responses:
         '204':
           description: Deleted
@@ -417,6 +451,11 @@ paths:
     post:
       tags: [states]
       summary: Reset a state
+      description: |
+        Clear configuration, sessions and history within this state; keep the
+        state record and all workspace files. Regenerate configuration on the
+        next start. Any active sandbox reference returns 409 state_locked;
+        reference checking and reset must exclude startup. No undo is provided.
       parameters:
         - $ref: '#/components/parameters/PathId'
       requestBody:
@@ -429,6 +468,7 @@ paths:
               properties:
                 confirm:
                   type: boolean
+                  enum: [true]
       responses:
         '200':
           description: Reset
@@ -493,18 +533,13 @@ paths:
     delete:
       tags: [sandboxes]
       summary: Delete a sandbox
+      description: |
+        Stop the process, revoke its token and remove the sandbox record.
+        Always preserve workspace/state. Use their separate endpoints for
+        cleanup. Legacy delete_state/delete_workspace parameters are rejected
+        with 400 invalid_request, even when false.
       parameters:
         - $ref: '#/components/parameters/PathId'
-        - name: delete_state
-          in: query
-          schema:
-            type: boolean
-            default: false
-        - name: delete_workspace
-          in: query
-          schema:
-            type: boolean
-            default: false
       responses:
         '204':
           description: Deleted
@@ -533,7 +568,21 @@ paths:
       summary: Mint a terminal WebSocket ticket
       description: |
         Connect to ws_url with the ticket. Messages are JSON:
-        {type: input|resize|ping}, server sends {type: output|exit|error}.
+        {type: input|resize|ping}, server sends {type: ready|output|exit|error}.
+        ready includes terminal_id and is sent only after attaching to a
+        writable PTY. The GUI must wait for ready before enabling input.
+        Disconnect detaches without terminating the PTY; drain and discard
+        unattached output so the harness does not block. A fresh ticket
+        reattaches to the same PTY, replacing the previous writable connection
+        with error code terminal_replaced; that client must stop auto-reconnecting.
+        No server-side scrollback is kept;
+        send resize on attach (even at the same dimensions) to trigger SIGWINCH
+        and request a TUI redraw. The GUI must disclose missing output history.
+        Before PTY readiness return 409 terminal_not_ready; after stop return
+        409 conflict. A daemon restart loses the PTY and invalidates tokens;
+        reconcile and stop orphan sandbox processes before releasing locks and
+        marking them stopped. Only then offer a new sandbox using persistent
+        workspace/state, not silent resume.
       parameters:
         - $ref: '#/components/parameters/PathId'
       responses:
@@ -543,6 +592,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TerminalTicket'
+        '409':
+          $ref: '#/components/responses/Conflict'
         default:
           $ref: '#/components/responses/Error'
 
@@ -808,6 +859,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthFlow'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/flows/{flow_id}/cancel:
+    post:
+      tags: [oauth]
+      summary: Cancel a pending OAuth flow
+      description: |
+        Invalidate state/PKCE context so a late callback cannot save credentials.
+        Cancellation and credential persistence must be mutually exclusive.
+        Repeated cancellation returns the cancelled flow. Other terminal states
+        return 409; an already connected credential requires a separate revoke.
+        Closing the browser alone does not cancel the flow.
+      parameters:
+        - name: flow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cancelled flow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthFlow'
+        '409':
+          $ref: '#/components/responses/Conflict'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1123,9 +1202,10 @@ components:
           type: boolean
         network_modes:
           type: array
+          description: Enforceable modes only; services_only still permits remote model/MCP/git calls through the gateway. None is offline.
           items:
             type: string
-            enum: [offline, filtered, open]
+            enum: [services_only, filtered, open]
         tunnel:
           type: boolean
         artifacts:
@@ -1177,7 +1257,7 @@ components:
 
     Job:
       type: object
-      required: [id, type, status, progress]
+      required: [id, type, status, progress, cancellable]
       properties:
         id:
           type: string
@@ -1185,7 +1265,10 @@ components:
           type: string
         status:
           type: string
-          enum: [queued, running, succeeded, failed]
+          enum: [queued, running, cancelling, cancelled, succeeded, failed]
+        cancellable:
+          type: boolean
+          description: True for harness/app installation; false when this job type has no cancellation support.
         progress:
           type: number
           minimum: 0
@@ -1199,7 +1282,7 @@ components:
 
     Workspace:
       type: object
-      required: [id, name, root_path, default_mode, created_at, last_used_at]
+      required: [id, name, root_path, storage_kind, default_mode, created_at, last_used_at]
       properties:
         id:
           type: string
@@ -1207,6 +1290,10 @@ components:
           type: string
         root_path:
           type: string
+        storage_kind:
+          type: string
+          enum: [managed, external]
+          description: Immutable ownership; a supplied root_path is external regardless of its location. Only managed files can be deleted by Nullkey.
         default_mode:
           type: string
           enum: [rw, ro]
@@ -1291,8 +1378,9 @@ components:
           default: native
         network_mode:
           type: string
-          enum: [offline, filtered, open]
+          enum: [services_only, filtered, open]
           default: filtered
+          description: services_only disables general egress, not gateway traffic. All modes allow remote model/MCP/git calls; none guarantees data stays local.
         mounts:
           type: array
           items:
@@ -1314,7 +1402,8 @@ components:
           enum: [native, desktop]
         network_mode:
           type: string
-          enum: [offline, filtered, open]
+          enum: [services_only, filtered, open]
+          description: The enforced mode; services_only still allows gateway calls to remote services.
         workspace_id:
           type: string
           nullable: true
@@ -1419,12 +1508,25 @@ components:
 
     ScanResult:
       type: object
-      required: [ok, hits, checks, scanned_at]
+      description: Heuristic check of Nullkey-generated environment/configuration, not proof that user project files are secret-free. Failures return an error, not zero hits.
+      required: [ok, hits, scope, excluded, checks, scanned_at]
       properties:
         ok:
           type: boolean
+          description: Whether the check completed, not whether the entire project is safe to share.
         hits:
           type: integer
+        scope:
+          type: string
+          enum: [generated_runtime]
+        excluded:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: string
+            enum: [workspace, user_imports, user_input]
         checks:
           type: array
           items:
@@ -1608,7 +1710,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, succeeded, failed, expired]
+          enum: [pending, succeeded, failed, expired, cancelled]
         credential_id:
           type: string
           nullable: true

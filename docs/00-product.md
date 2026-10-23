@@ -2,7 +2,7 @@
 
 ## 1. 一句话
 
-**Nullkey 是一个轻量的 macOS 沙箱：默认在终端里跑 Codex 等编码 Agent，凭证只存在宿主 Keychain，沙箱里只有 per-sandbox token；需要图形界面时再单独打开虚拟桌面。**
+**Nullkey 是一个轻量的 macOS 沙箱：默认在终端里跑 Codex 等编码 Agent，Nullkey 管理的凭证保存在宿主 Keychain，只向沙箱注入 per-sandbox token；需要图形界面时再单独打开虚拟桌面。**
 
 ## 2. 目标用户
 
@@ -32,7 +32,7 @@
 | 4 | Harness 优先级 | **Codex Must**；Claude Code、DSH Should | Codex 开源、可定制 provider/OAuth，最容易跑通 |
 | 5 | 凭证 | **OAuth Broker 一等公民** + API key | 很多服务不支持 API key |
 | 6 | 状态 | workspace / state / cache **持久化 + 可共享** | 方便继续进度、复用登录/缓存 |
-| 7 | 网络 | `offline` / `filtered`（默认）/ `open` | 断网局限太大；认证流量走 gateway 即可 |
+| 7 | 网络 | `services_only` / `filtered`（默认）/ `open` | 断网局限太大；认证流量走 gateway 即可 |
 | 8 | GUI | **不在本设计范围**；后端冻结 API 契约 | App 选型由独立团队负责 |
 | 9 | 服务隧道 | 宿主 → 沙箱 ingress，只暴露声明服务，一次性 ticket | 让 WebUI-only harness 可用；产物可审查 |
 
@@ -51,9 +51,9 @@ OAuth 是 v1 的核心能力：
 
 ### 首次使用
 
-1. 打开 GUI → 添加凭证：Codex OAuth（宿主浏览器）或 API key；GitHub OAuth 或 PAT。
+1. 打开 GUI → 连接 Codex：OAuth（宿主浏览器）或 API key；GitHub 在需要 MCP 时再连接，不阻塞首次启动。
 2. 安装 Codex：宿主下载固定版本，校验，缓存。
-3. 创建 workspace（或选择已有目录），选择网络模式（默认 `filtered`）。
+3. 创建 workspace（或选择已有目录），选择网络模式（默认 `filtered`）。已有目录明确显示实际路径、读写权限，以及文件直接修改和项目自带凭证不受保护的边界。
 4. 启动沙箱 → 直接在 Terminal 页进入 Codex TUI。
 5. 需要时点"Open Desktop" → 启动可选桌面后端。
 
@@ -66,7 +66,7 @@ OAuth 是 v1 的核心能力：
 ### 泄漏演练（演示）
 
 1. 沙箱终端 `env`、`cat ~/.codex/config.toml`、`grep -R "sk-"` → 只有 `NULLKEY_TOKEN`。
-2. 把 workspace/state 打包 → 没有真实 key/OAuth token。
+2. 在不含自带凭证的测试项目中打包 workspace/state → 检查 Nullkey 未注入已注册的 key/OAuth token；不能据此保证任意用户项目可安全导出。
 3. 停止沙箱 → token 失效；撤销凭证 → 下一次调用失败。
 
 ## 7. GUI 结构
@@ -85,6 +85,8 @@ OAuth 是 v1 的核心能力：
 | Audit | 沙箱/凭证/网络事件 | 过滤、导出 |
 
 > GUI 由独立团队实现；本仓库只定义 API、事件和终端协议（见 [08](08-api-contract.md)）。
+
+以上是功能清单，不是十个同级导航。主线为“工作区 → 当前会话 → 终端 / 产物 / 服务”；桌面按能力按需出现，凭证/MCP/审计归入管理入口。GUI 行为与无障碍验收见 [10](10-interaction-contract.md)。
 
 ## 8. 范围
 
@@ -120,7 +122,7 @@ OAuth 是 v1 的核心能力：
 1. **默认 TUI**：打开就能用，不先等桌面。
 2. **零密钥输入**：沙箱内任何页面都不要求填 key。
 3. **状态默认持久化**：关掉再开，workspace/state/cache 还在。
-4. **可撤销**：停止沙箱、撤销凭证、清理 state 都是一步操作。
+4. **可控**：关闭视图不停止任务；停止沙箱保留文件和会话。清除会话/删除文件是独立且需确认的不可恢复操作；安装和授权可取消。
 5. **失败关闭**：gateway/token/网络失败 → 明确报错，不降级直连。
 6. **不假装**：明确说明哪些攻击不在范围内。
 
@@ -128,7 +130,7 @@ OAuth 是 v1 的核心能力：
 
 - 首次到 Codex TUI < 5 分钟。
 - 冷启动 p95 < 1.5s；daemon RSS < 80MB；单沙箱额外 < 40MB。
-- 沙箱扫描：注册凭证命中数 = 0。
+- 凭证检查：受控测试项目中，Nullkey 生成的配置/进程环境内注册凭证命中数 = 0；结果展示范围与时间，不宣称整个项目无秘密。
 - Codex 跑通；Claude Code/DSH 至少一个。
 - 2 个 MCP 可用，配置零敏感信息。
 - 3 分钟演示不翻车。

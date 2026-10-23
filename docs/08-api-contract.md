@@ -1,6 +1,6 @@
 # 08 · API 契约 v1
 
-> 本地 daemon ↔ GUI 的唯一契约。GUI 团队可以按本文并行实现，不需要等后端。
+> 本地 daemon ↔ GUI 的契约草案。GUI 可按本文做 mock；完成 [交互验收](10-interaction-contract.md) 并与 OpenAPI 对齐后冻结，不把未定义的行为留给各端自行决定。
 >
 > Base URL：`http://127.0.0.1:<port>/api/v1`
 >
@@ -11,7 +11,7 @@
 ## 1. 约定
 
 - JSON，字段 `snake_case`；时间 RFC 3339 UTC。
-- ID 前缀：`sbx_`、`ws_`、`st_`、`cred_`、`mcp_`、`flow_`、`job_`。
+- ID 前缀：`sbx_`、`ws_`、`st_`、`cred_`、`mcp_`、`flow_`、`job_`、`term_`。
 - 破坏性变更升 `/api/v2`；v1 只做加法。
 - POST 支持 `Idempotency-Key`；重复 key 返回同一结果。
 - 分页：`?limit=50&cursor=...`，响应 `{items, next_cursor}`。
@@ -46,6 +46,7 @@
 | `ticket_invalid` | 401 | 隧道 ticket 过期/复用 |
 | `network_denied` | 403 | egress 规则拒绝 |
 | `job_failed` | 500 | 安装/OAuth/构建失败 |
+| `terminal_not_ready` | 409 | PTY 尚未可写，可稍后重新申请 ticket |
 | `internal` | 500 | 未分类 |
 
 ## 3. 资源
@@ -62,13 +63,15 @@ GET /capabilities
 → 200 {
   "runtimes": ["native"],
   "desktop_available": false,
-  "network_modes": ["offline", "filtered", "open"],
+  "network_modes": ["services_only", "filtered", "open"],
   "tunnel": true,
   "artifacts": true,
   "oauth_providers": ["codex", "github"],
   "mcp_servers": ["github", "filesystem"]
 }
 ```
+
+`services_only` 显示为“仅允许已连接服务”：关闭通用 egress，模型/MCP/git 仍可经 gateway 联网；不是离线模式。`filtered`/`open` 同样保留 gateway。能力列表只返回当前 runtime 能实际执行的模式。
 
 ### 3.2 Harnesses
 
@@ -97,12 +100,22 @@ GET /jobs/{job_id}
 → 200 {
   "id": "job_123",
   "type": "harness.install",
-  "status": "running|succeeded|failed",
+  "status": "queued|running|cancelling|cancelled|succeeded|failed",
+  "cancellable": true,
   "progress": 0.6,
   "message": "downloading",
   "error": null
 }
 ```
+
+```http
+POST /jobs/{job_id}/cancel
+→ 202 { "id": "job_123", "type": "harness.install", "status": "cancelling", "cancellable": true, "progress": 0.6 }
+```
+
+- harness/app 安装必须可取消；其他 job 用 `cancellable` 声明能力。已进入取消流程的重复请求返回当前 job，不重复执行。
+- `cancelled` 只在下载/子进程停止、临时文件清理后发出；保留原已安装版本和完整校验过的共享缓存。取消不得留下半安装版本。
+- 取消与最终安装提交互斥；已经成功/失败或不可取消返回 `409 conflict`，GUI 显示实际状态，不谎报“已取消”。进度/状态通过 `job.progress` 和 `GET /jobs/{job_id}` 获取。
 
 ### 3.3 Apps（桌面端 catalog）
 
@@ -135,6 +148,7 @@ GET /workspaces
   "id": "ws_123",
   "name": "example",
   "root_path": "/Users/me/code/example",
+  "storage_kind": "external",
   "default_mode": "rw",
   "size_bytes": 123456,
   "last_sandbox_id": "sbx_456",
@@ -152,12 +166,20 @@ POST /workspaces
 
 - `root_path` 省略时创建在 `~/Library/Application Support/Nullkey/workspaces/<id>`。
 - 自定义路径必须通过路径校验；禁止 home/SSH/Keychain。
+- `storage_kind` 由 daemon 固定为 `managed`（省略 root_path 创建）或 `external`（用户指定目录）；GUI 展示实际路径和读写权限。
 
 ```http
-POST /workspaces/{id}/reset
-{ "confirm": true }
-→ 200 { "ok": true }
+DELETE /workspaces/{id}
+→ 204   // 仅移除记录，保留磁盘文件
+
+DELETE /workspaces/{id}?delete_files=true&confirm_name=example
+→ 204   // 仅 managed：删除目录全部内容及记录
 ```
+
+- `delete_files=true` 必须匹配当前 workspace 名称；缺失/不匹配返回 `400 invalid_request`。external 无论是否确认都拒绝删除文件，GUI 只提供“从列表移除”。
+- managed 删除包括 `.git`、未提交和未跟踪文件，无法撤销；GUI 先展示完整路径与影响。
+- 任一活动 sandbox（含只读）引用时返回 `409 state_locked`；检查与操作互斥。不隐式停止任务。
+- v1 不提供 workspace reset；避免把“重置”解释为不同范围的文件删除。
 
 产物审查（只读）：
 
@@ -200,7 +222,12 @@ POST /states
 POST /states/{id}/reset
 { "confirm": true }
 → 200 { "ok": true }
+
+DELETE /states/{id}?confirm=true
+→ 204
 ```
+
+reset 清除该 state 内的配置、会话和历史，保留记录，下次启动重新渲染配置；delete 同时删除目录和记录。均不影响 workspace；`confirm` 必须为 true，GUI 确认框明确损失范围。活动 sandbox 引用时返回 `409 state_locked`，与启动互斥。
 
 ### 3.6 Sandboxes
 
@@ -252,9 +279,11 @@ GET /sandboxes/{id}
 POST /sandboxes/{id}/stop
 → 200 { "ok": true }
 
-DELETE /sandboxes/{id}?delete_state=false&delete_workspace=false
+DELETE /sandboxes/{id}
 → 204
 ```
+
+停止/删除都结束进程并撤销 token；delete 另移除 sandbox 记录。两者始终保留 workspace/state，不接受 `delete_state/delete_workspace` 级联参数（传入返回 `400 invalid_request`）。数据清理使用独立 workspace/state 接口。
 
 ### 3.7 Terminal
 
@@ -276,6 +305,7 @@ WebSocket：
 { "type": "ping" }
 
 // server → client
+{ "type": "ready", "terminal_id": "term_123" }
 { "type": "output", "data": "..." }
 { "type": "exit", "code": 0 }
 { "type": "error", "code": "token_invalid", "message": "..." }
@@ -283,6 +313,11 @@ WebSocket：
 
 - ticket 一次性、30 秒有效；连接后校验 Origin/localhost。
 - 终端输出是 UTF-8 文本；控制序列原样透传。
+- PTY 归 daemon 管理；关闭/刷新窗口或 WebSocket 断线仅 detach，不停止进程、不撤销 token；daemon 持续读取并丢弃无人接收的输出，不能因没有连接而阻塞 harness。GUI 分开显示“连接已断开”和“沙箱已停止”。
+- 重开时重新申请 ticket，attach 到同一 `terminal_id`/PTY；不启动第二个 harness。v1 只允许一个可写连接，新连接通过验证后替换旧连接，旧连接收到 `error: terminal_replaced` 后关闭，停止自动重连并提示“终端已在另一视图打开”，避免相互抢占和重复输入。
+- PTY 尚未可写时，ticket 接口返回 `409 terminal_not_ready`；停止后返回 `409 conflict`。`ready` 仅在连接已绑定可写 PTY 后发送；GUI 收到它才启用输入，不能用 HTTP 201 或 WS open 代替。
+- v1 不保存服务器端历史输出；每次 attach 后客户端发送当前 resize，daemon 即使尺寸相同也触发 SIGWINCH，请求 TUI 重绘。GUI 提示“已重新连接；断线期间历史输出不可恢复”，不能宣称完整恢复 scrollback。
+- daemon 重启会丢失原 PTY 并使 token 失效；重启恢复阶段核对并停止遗留 sandbox 进程，完成后释放锁、将会话标记 stopped。GUI 在核对期间不宣称任务已停止、不允许同一 workspace 再启动；完成后提示原任务已中断，提供用已有 workspace/state 重新启动的入口。持久化会话恢复与连接恢复分开表达。
 
 ### 3.8 Desktop（可选）
 
@@ -340,23 +375,24 @@ GET /sandboxes/{id}/stats
 }
 ```
 
-### 3.11 无凭证扫描
+### 3.11 凭证注入检查
 
 ```http
 POST /sandboxes/{id}/scan
 → 200 {
   "ok": true,
   "hits": 0,
+  "scope": "generated_runtime",
+  "excluded": ["workspace", "user_imports", "user_input"],
   "checks": [
     { "name": "env", "hits": 0 },
-    { "name": "config", "hits": 0 },
-    { "name": "grep_prefixes", "hits": 0 }
+    { "name": "generated_config", "hits": 0 }
   ],
   "scanned_at": "..."
 }
 ```
 
-> 扫描是启发式验证；保证来自架构（凭证从未进入沙箱）。
+> `scope=generated_runtime` 仅检查 Nullkey 生成的进程环境和配置；不检查整个 workspace、用户导入或主动输入。`ok` 表示检查完成，`hits=0` 只表示此范围未发现凭证。检查失败返回错误，不伪装成零命中。GUI 展示检查范围、排除项和时间；不使用“0 secrets”或“可安全分享”结论。
 
 ### 3.12 Credentials
 
@@ -434,11 +470,19 @@ GET /oauth/callback?code=...&state=...
 GET /oauth/flows/{flow_id}
 → 200 {
   "id": "flow_123",
-  "status": "pending|succeeded|failed|expired",
+  "status": "pending|succeeded|failed|expired|cancelled",
   "credential_id": "cred_123",
   "error": null
 }
 ```
+
+```http
+POST /oauth/flows/{flow_id}/cancel
+→ 200 { "id": "flow_123", "status": "cancelled", "credential_id": null, "error": null }
+```
+
+- 取消 pending flow 时使 state/PKCE 上下文失效；迟到 callback 不得写入凭证。取消与凭证保存互斥，成功保存已发生时返回 `409 conflict`，GUI 显示已连接并提供断开入口。
+- 重复取消 cancelled flow 返回同一状态；其他终态返回 `409 conflict`。浏览器窗口关闭不等同于取消，GUI 保留“等待授权 / 取消 / 重试”反馈；重试前先取消旧 pending flow。
 
 ```http
 DELETE /oauth/connections/{credential_id}
@@ -526,7 +570,7 @@ event: sandbox.status
 data: {"sandbox_id":"sbx_456","status":"running"}
 
 event: job.progress
-data: {"job_id":"job_123","progress":0.6,"message":"downloading"}
+data: {"job_id":"job_123","status":"running","progress":0.6,"message":"downloading"}
 
 event: oauth.status
 data: {"flow_id":"flow_123","status":"succeeded"}
@@ -547,7 +591,8 @@ data: {"sandbox_id":"sbx_456","service_id":"dsh-web"}
 sandbox: creating → starting → running → stopping → stopped
                          └── failed
 job:     queued → running → succeeded | failed
-oauth:   pending → succeeded | failed | expired
+             └──────┴──→ cancelling → cancelled
+oauth:   pending → succeeded | failed | expired | cancelled
 ```
 
 ## 5. GUI 对接顺序
@@ -555,12 +600,12 @@ oauth:   pending → succeeded | failed | expired
 1. `GET /capabilities`、`GET /harnesses`、`GET /providers`。
 2. `POST /credentials` / `POST /oauth/start` → 轮询 flow。
 3. `POST /workspaces`、`POST /states`。
-4. `POST /sandboxes` → WS terminal。
+4. `POST /sandboxes` → 申请 terminal ticket → WS `ready` 后启用输入；非就绪状态显示进度。
 5. `GET /events` 更新状态；`GET /stats` 显示资源。
 6. `POST /sandboxes/{id}/desktop`（可选）。
 
 ## 6. 兼容性
 
-- v1 内只加字段、不删字段；新增 enum 值需要 GUI 容忍未知值。
+- 冻结后的 v1 只加兼容字段、不删字段；新增 enum 值需要 GUI 容忍未知值。
 - 事件/WS 消息带 `type`；未知类型忽略。
-- 2026-10 冻结本契约；后续变更走 `/api/v2` 或 ADR。
+- 本次发布前修订将 `offline` 改名为 `services_only`，移除 workspace reset 和 sandbox 级联删除参数；这是设计期修正，不声明已发布客户端兼容。GUI/OpenAPI 对齐并通过 [10](10-interaction-contract.md) 的验收后冻结；冻结后的破坏性变更走 `/api/v2`。
