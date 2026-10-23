@@ -1,159 +1,161 @@
 # Nullkey
 
-> 桌面级 Agent 安全沙箱。API key、password 永远不进入沙箱。
+> 桌面级 Agent 安全沙箱。API key、OAuth token、password 永远不进入沙箱。
 >
-> A desktop-grade secure sandbox for AI coding agents. Keys never enter the sandbox.
+> A desktop-grade secure sandbox for AI coding agents. Credentials never enter the sandbox.
 
-**Status:** design phase · macOS Apple Silicon first · 3-day MVP
+**Status:** design phase · macOS Apple Silicon · 3-day MVP
 
-## 为什么需要它
+## 为什么
 
-Agent session 会以很多方式离开本机：transcript、调试日志、环境变量、MCP 配置、磁盘镜像、崩溃转储、共享桌面、导出的文件。只要真实 key 在沙箱里，任何一次 session 泄漏都可能变成 key 泄漏。
+Agent session 会以很多方式离开本机：transcript、日志、环境变量、MCP 配置、工作区文件、崩溃转储、截图。只要真实凭证在沙箱里，任何一次 session 泄漏都可能变成 key 泄漏。
 
 Nullkey 把沙箱变成 **zero-secret zone**：
 
-- 沙箱里没有 API key、没有 password、没有 OAuth token、没有 SSH key。
+- 沙箱里没有 API key、password、OAuth token、SSH key。
 - 沙箱里的 harness / MCP 配置只有一枚 **per-sandbox token**（可撤销、只在当前沙箱有效）。
 - 真实凭证只在宿主机：macOS Keychain + Nullkey daemon。
-- 模型请求和 MCP 调用都经过宿主侧网关，由网关在沙箱外注入真实凭证。
-- 沙箱默认走 `filtered` 网络：互联网经 egress proxy（域名 allowlist），认证流量走网关。
+- 模型调用、MCP 调用、私有 git 都经过宿主侧 gateway，由 gateway 在沙箱外注入凭证。
+- 沙箱默认走 `filtered` 网络：未认证流量经 egress proxy，认证流量经 gateway。
 
-**即使整个沙箱磁盘/transcript 被拿走，也拿不到真实 key。**
+**即使整个沙箱状态被拿走，也拿不到真实凭证。**
+
+## 轻量优先
+
+默认 runtime **不使用虚拟机**：
+
+- 原生 macOS 进程沙箱（Seatbelt / `sandbox-exec`）+ 独立 workspace。
+- 直接运行 Codex CLI、Claude Code、DSH 等 macOS 原生 harness。
+- 默认界面是 **SSH-client 风格的终端页**（xterm.js + PTY），里面跑 harness 自己的 TUI；不是虚拟桌面。
+- 冷启动目标 < 1s，daemon 常驻内存 < 80MB，单沙箱额外开销 < 40MB。
+- 虚拟桌面/桌面应用是 **可选后端**，只在打开时启动；需要虚拟化，单独计量，不计入默认 SLO。
 
 ## 怎么工作
 
 ```mermaid
 flowchart LR
-  subgraph Host["宿主机 · 可信"]
-    GUI["Nullkey GUI"]
-    D["nullkeyd<br/>daemon"]
+  subgraph HOST["宿主机 · TCB（可信）"]
+    GUI["GUI / Terminal 页"]
+    D["nullkeyd<br/>API / 调度 / 审计"]
     KC[("macOS Keychain")]
     MG["Model Gateway"]
-    MCP["MCP Gateway"]
+    MCPG["MCP Gateway"]
+    OA["OAuth Broker"]
     EP["Egress Proxy<br/>allowlist"]
-    SM["Sandbox Manager"]
+    ST[("Workspace / State / Cache")]
+
     GUI --> D
     D --> KC
     D --> MG
-    D --> MCP
-    D --> SM
+    D --> MCPG
+    D --> OA
+    D --> EP
+    D --> ST
   end
 
-  subgraph SBX["沙箱 · 不可信（但无需假设 Agent 恶意）"]
-    H["Harness<br/>Claude Code / Codex / DSH"]
-    DT["Desktop<br/>Xvfb + noVNC"]
-    T["per-sandbox token<br/>（配置）"]
-    H --> T
+  subgraph SBX["Native sandbox · 无 VM（Seatbelt）"]
+    H["Codex CLI / Claude Code / DSH<br/>TUI"]
+    PTY["PTY"]
+    H --> PTY
   end
 
-  H --> T
-  H -->|model / MCP / git| D
-  H -->|HTTP(S)_PROXY| EP
-  EP -->|allowlist| NET["Internet"]
-  DT -->|noVNC| D
-  SM --> H
-  MG -->|real key| UP["模型 API"]
-  MCP -->|real key| MS["MCP Server（宿主侧）"]
+  H -->|"localhost: gateway"| D
+  H -->|"localhost: proxy"| EP
+  PTY -->|"WebSocket"| GUI
+  MG -->|"real key"| UP["模型 API"]
+  MCPG -->|"real key"| MS["MCP Server<br/>宿主侧"]
+  OA -->|"OAuth token"| UP
+  EP -->|"allowlist"| NET["Internet"]
 ```
 
 一次模型调用：
 
 ```text
-Harness → base_url=http://gateway/anthropic
-        → Authorization: Bearer <sandbox-token>
-        → Gateway 校验 token，换成真实 Anthropic key
-        → 上游 API
-        → 流式返回给 Harness
+Codex TUI → base_url=http://127.0.0.1:<gateway>/openai
+          → Authorization: Bearer <per-sandbox token>
+          → Gateway 校验 token，换成真实 key（API key 或 OAuth token）
+          → 上游 API
+          → 流式返回 TUI
 ```
 
-一次 MCP 调用：
+一次私有 git：
 
 ```text
-Harness → http://gateway/mcp/github
-        → Authorization: Bearer <sandbox-token>
-        → Gateway 找到宿主侧 GitHub MCP server
-        → 注入真实 GitHub token，执行 tool call
-        → 结果返回给 Harness
+sandbox: git remote = http://127.0.0.1:<gateway>/git/github/<owner>/<repo>.git
+gateway: 注入真实 GitHub 凭证 → github.com
+token 不进入 sandbox
 ```
-
-未认证流量（`npm`/`pip`/公开文档/公开 git）经 egress proxy；认证流量（模型/MCP/git）经 gateway。沙箱没有默认外网路由，不能直连 IP。
 
 ## 产品形态
 
-- **本地 GUI**：首页选 harness；一键启动沙箱；浏览器里看虚拟桌面；Keys / MCP / Audit 三个管理页。
-- **Harness 不随安装包分发**：从官方源下载到宿主缓存，校验版本/哈希，只读挂载进沙箱。
-- **全局密钥（v1）**：所有沙箱共用一组 key；每个沙箱有独立 token、独立审计、可单独撤销。
-- **凭证零填写**：MCP 配置、harness 配置、环境变量里都没有敏感信息；用户在 GUI 里填一次，之后不再碰。
-- **macOS Apple Silicon 优先**：后端通过 `SandboxProvider` 抽象，后续接 Linux / Windows / microVM。
+- 本地 GUI：默认打开 SSH-client 风格的 **Terminal** 页，里面跑 harness 的 TUI；虚拟桌面在独立标签/窗口按需打开。
+- 用户选择 harness/app：Codex（Must）、Claude Code / DSH（Should）、Codex app 等桌面端（可选 catalog）。
+- Harness/app 不随安装包分发：宿主侧下载、固定版本/哈希、只读挂载或安装到缓存。
+- 全局凭证：OAuth（宿主侧 broker）或 API key；所有沙箱共用，按沙箱 token 隔离。
+- 状态持久化：workspace、harness state、cache 默认持久化并可在沙箱间共享。
+- 所有配置由后端生成，用户不需要编辑 YAML 或在沙箱里填 key。
 
 ## 安全边界
 
-**范围内**：session 泄漏导致的 key 泄漏。
+**范围内**：session 泄漏导致的凭证泄漏。
 
 - transcript / 日志 / 环境变量 / 进程参数
 - harness 配置、MCP 配置、shell history
-- 沙箱磁盘、快照、崩溃转储
-- 导出文件、共享桌面、截图
+- workspace、state、缓存、崩溃转储
+- 导出文件、共享终端、截图
 - 宿主侧日志与 MCP server 日志
 
-**范围外**（明确不承诺）：
+**范围外**：
 
 - Agent 被 prompt injection 操控
 - Agent 本身恶意、主动滥用自己的权限
 - 目标网站/上游 API 被劫持
 - 恶意 MCP server 实现
-- 沙箱逃逸（提供隔离，但不宣称经过认证的强隔离）
+- 沙箱逃逸（提供进程沙箱；不宣称 VM 级隔离）
 - 通过互联网/MCP/模型通道外发私有数据
 - 供应链攻击、物理访问
-
-该取舍是有意为之：三天内把"key 不进沙箱"做到可信、可验证、好用，比声称能防住所有 Agent 攻击更有价值。
 
 ## 计划支持
 
 | 类别 | v1 | 说明 |
 |---|---|---|
-| Harness | Claude Code、Codex、DSH | 通过 base URL + per-sandbox token 接入；API key 为主，订阅登录可实验性导入 |
-| MCP | GitHub、Slack、Notion、Postgres；Filesystem | 有凭证的在宿主侧，凭据由网关注入；Filesystem 在沙箱侧（无凭证）；v1 先做 2–3 个 |
-| Network | `offline` / `filtered`（默认）/ `open` | 互联网只经 egress proxy；认证只经 gateway |
-| Host | macOS Apple Silicon | 后续 Linux / Windows |
-| Auth | API key/token 广谱支持；OAuth 宿主登录导入（实验） | 不做完整 OAuth 授权流程；详见 [03](docs/03-harness-mcp.md#6-oauth) |
+| Harness | **Codex（Must）**；Claude Code、DSH（Should） | 原生 TUI；per-sandbox token |
+| 桌面端 | Codex app 等（可选 catalog） | 需 desktop runtime；默认不启动 |
+| MCP | GitHub、Filesystem、Slack、Notion、Postgres | 有凭证的宿主侧；Filesystem 沙箱侧；v1 先 2–3 个 |
+| Auth | **OAuth Broker** + API key | Codex OAuth 优先；MCP OAuth DCR；其他 provider 逐步 |
+| Network | `offline` / `filtered`（默认）/ `open` | egress proxy；认证走 gateway |
+| State | 持久化 + 共享 | workspace / state / cache 三类 |
 
-## 凭证支持
+## SLO
 
-v1 的目标是"常用 key 都能放进来"，不是"只支持两家"。
-
-| 类型 | v1 支持 |
-|---|---|
-| 模型 API key | Anthropic、OpenAI、DeepSeek、Google Gemini、OpenRouter、Groq、Mistral、xAI、Azure OpenAI、Ollama/LM Studio（无 key）、任意 OpenAI-compatible endpoint |
-| MCP token | GitHub PAT、Slack bot token、Notion integration token、Linear/Sentry API key、Postgres connection string、通用 Bearer/Header |
-| 认证方式 | Bearer、x-api-key、api-key header、Basic、query、custom header |
-| OAuth | **v1 不做完整授权流程**；提供实验性"导入宿主已有登录"（Codex 优先；Claude Code 支持 setup-token/Keychain 导入）。完整宿主侧 OAuth broker + MCP OAuth 放 v1.1 |
-
-为什么 OAuth 不放进 Must：完整 OAuth 要处理浏览器回调、PKCE、动态客户端注册、刷新、provider ToS；Claude Code 闭源，Codex 虽开源但把订阅 token 用在第三方网关有条款风险。详见 [03 · Harness 与 MCP 接入](docs/03-harness-mcp.md#6-oauth)。
+目标见 [slo.md](slo.md)：冷启动、内存、CPU、终端 RTT、gateway 开销、并发。默认 native runtime 的指标；桌面后端单独计量。
 
 ## 文档
 
-- [00 · 产品形态与范围](docs/00-product.md)
-- [01 · 威胁模型与安全保证](docs/01-threat-model.md)
+- [00 · 产品与范围](docs/00-product.md)
+- [01 · 威胁模型](docs/01-threat-model.md)
 - [02 · 架构](docs/02-architecture.md)
-- [03 · Harness 与 MCP 接入](docs/03-harness-mcp.md)
-- [04 · 三天实施计划](docs/04-plan.md)
+- [03 · Harness / MCP / OAuth](docs/03-harness-mcp.md)
+- [04 · 三天计划](docs/04-plan.md)
 - [05 · 调研与选型](docs/05-research.md)
-- [06 · 决策记录与开放问题](docs/06-decisions.md)
+- [06 · 决策记录](docs/06-decisions.md)
+- [07 · 状态、文件挂载与持久化](docs/07-state-and-mounts.md)
+- [08 · API 契约](docs/08-api-contract.md)
+- [SLO](slo.md)
 
 ## 三天 MVP
 
 Must：
 
-- 本地 GUI + daemon；Colima/Docker 沙箱 + 虚拟桌面。
-- Keychain 全局密钥；模型网关；Claude Code 跑通。
-- 宿主侧 MCP 网关 + GitHub MCP；配置里零敏感信息。
-- 启动/停止/删除沙箱；per-sandbox token 撤销；审计。
-- "沙箱无密钥"检查 + 演示脚本。
+- Native runtime（Seatbelt）+ TUI（PTY/WebSocket）+ workspace/state/cache。
+- Codex 跑通：API key + OAuth（宿主侧）。
+- 全局凭证：Keychain、按沙箱 token、撤销。
+- 模型 gateway + 一个真实 MCP（GitHub）+ egress proxy。
+- 持久化 workspace；API 契约冻结；SLO 基线。
 
-Should：Codex / DSH 适配、第二个 MCP、Tauri 外壳。
+Should：Claude Code / DSH、MCP OAuth DCR、桌面 runtime/Codex app、第二个 MCP。
 
-Won't：OAuth、Windows/Linux host、多用户、microVM、原生安装包。
+Won't：默认 VM、Windows/Linux host、多租户、完整桌面 catalog。
 
 ## 开发
 

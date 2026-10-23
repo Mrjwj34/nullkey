@@ -5,421 +5,277 @@
 ```mermaid
 flowchart LR
   subgraph HOST["宿主机 · TCB（可信）"]
-    GUI["GUI<br/>127.0.0.1"]
+    GUI["GUI<br/>SSH-client 风格终端页"]
     D["nullkeyd<br/>API / 调度 / 审计"]
     KC[("macOS Keychain")]
     MG["Model Gateway"]
     MCPG["MCP Gateway"]
-    DP["Desktop Proxy"]
-    SM["Sandbox Manager"]
-    BR["gateway-bridge<br/>（无密钥）"]
-    EP["Egress Proxy<br/>allowlist / 日志"]
+    OA["OAuth Broker"]
+    EP["Egress Proxy<br/>CONNECT + allowlist"]
+    ST[("Workspace / State / Cache")]
+    TS["Terminal Service<br/>PTY + WebSocket"]
+    DP["Desktop Proxy<br/>可选"]
 
     GUI --> D
     D --> KC
     D --> MG
     D --> MCPG
+    D --> OA
+    D --> EP
+    D --> ST
+    D --> TS
     D --> DP
-    D --> SM
-    MG --> BR
-    MCPG --> BR
-    BR --> D
   end
 
-  subgraph SBX["沙箱 · 不可信（防泄漏，不假设恶意 Agent）"]
-    H["Harness<br/>Claude Code / Codex / DSH"]
-    CFG["配置<br/>只有 per-sandbox token"]
-    DT["Desktop<br/>Xvfb + noVNC"]
-    WS[("Workspace / ephemeral home")]
-    H --> CFG
-    DT --> WS
+  subgraph SBX["Native sandbox · 无 VM（Seatbelt）"]
+    H["Codex CLI / Claude Code / DSH<br/>TUI"]
+    SH["shell / git / npm"]
+    H --> SH
   end
 
-  H -->|"model / MCP / git"| BR
-  H -->|"HTTP(S)_PROXY"| EP
+  H -->|"127.0.0.1: gateway"| D
+  H -->|"127.0.0.1: proxy"| EP
+  TS -->|"WebSocket"| GUI
+  MG -->|"real key / OAuth"| UP["模型 API"]
+  MCPG -->|"real key"| MS["MCP Server<br/>宿主侧"]
   EP -->|"allowlist"| NET["Internet"]
-  DP -->|"noVNC ws"| DT
-  SM --> H
-  MG -->|"real key"| UP["模型 API"]
-  MCPG -->|"real key"| MS["MCP Server<br/>宿主侧进程"]
 ```
 
 三个关键点：
 
-1. **沙箱可以上网，但只能经 egress proxy**；没有默认路由，不能直连 IP/DNS。
-2. **沙箱里只有 per-sandbox token**，没有真实 key。
-3. **真实 key 只在宿主**：Keychain + daemon + 宿主侧 MCP server；认证流量走 gateway，不走 proxy。
+1. **默认 runtime 不是 VM**：原生 macOS 进程 + Seatbelt profile；启动快、内存低。
+2. **沙箱里只有 per-sandbox token**；真实凭证只在 Keychain + gateway。
+3. **网络与凭证正交**：未认证流量经 egress proxy；认证流量经 gateway。沙箱有网也拿不到 key。
 
 ## 2. 组件职责
 
 | 组件 | 位置 | 职责 | 不做什么 |
 |---|---|---|---|
-| GUI | 宿主 | harness 选择、key/MCP 管理、沙箱控制、桌面、审计 | 不把 key 传给沙箱 |
-| `nullkeyd` | 宿主 | API、调度、配置渲染、审计、日志脱敏 | 不把 key 写日志 |
+| GUI | 宿主 | 终端页、桌面页、凭证/工作区/MCP 管理 | 不把凭证传给沙箱 |
+| `nullkeyd` | 宿主 | API、调度、配置渲染、审计、日志脱敏 | 不记录凭证 |
+| Terminal Service | 宿主 | PTY、WebSocket、resize、exit | 不解析终端内容 |
+| Runtime | 宿主 | 启动/停止 harness 进程，套 Seatbelt profile | 不挂宿主 home |
 | Keychain helper | 宿主 | 读写 macOS Keychain | 不走 argv 传 key |
-| Model Gateway | 宿主 | 校验 sandbox token，注入真实模型 key，流式转发 | 不记录 body |
-| MCP Gateway | 宿主 | 托管/代理 MCP server，注入真实凭证，按连接路由 | 不把凭证返回沙箱 |
-| Desktop Proxy | 宿主 | noVNC WebSocket 代理 + 一次性 ticket | 不暴露到 LAN |
-| Sandbox Manager | 宿主 | 创建/启动/停止/删除沙箱，渲染配置 | 不挂宿主目录 |
-| gateway-bridge | 宿主容器 | 把内部网络的 HTTP 转发到 daemon 的 UDS | 不持有任何密钥 |
-| Egress Proxy | 宿主容器 | 双网卡；未认证互联网流量经此，按域名 allowlist 放行 | 不做 TLS MITM、不注入凭证 |
-| Sandbox | 不可信 | 跑 harness、桌面、workspace | 没有 key；只有 proxy/gateway 路由 |
-| MCP Server | 宿主 | 实际执行 MCP tool；持有自己的凭证 | 不把凭证写回沙箱 |
+| Model Gateway | 宿主 | token → sandbox，注入 API key/OAuth，流式转发 | 不记录 body |
+| MCP Gateway | 宿主 | 宿主侧 MCP server，注入凭证，按连接路由 | 不把凭证返回沙箱 |
+| OAuth Broker | 宿主 | PKCE、callback、refresh、Keychain | 不在沙箱内登录 |
+| Egress Proxy | 宿主 | CONNECT + 域名 allowlist，无 MITM | 不注入凭证 |
+| Desktop Runtime | 可选 | 虚拟桌面/桌面 app，按需启动 | 不进入默认 SLO |
+| Sandbox | 不可信 | 跑 harness、shell、workspace | 没有真实凭证 |
 
 ## 3. 信任边界
 
-- **宿主 = TCB**：`nullkeyd`、Keychain、Model/MCP Gateway、MCP server。
+- **宿主 = TCB**：daemon、Keychain、gateway、OAuth broker、MCP server、egress proxy。
 - **沙箱 = 不可信**：按可能被导出、被读、被复制的假设设计；不假设 Agent 恶意。
-- **上游 = 外部**：模型 API、第三方 MCP 服务；不在本地控制范围。
-- **MCP server = 需要凭证的第三方代码**：它必须拿到真实凭证才能工作，因此它本身是"被信任到可以使用凭证"的组件；它不能把凭证回传给沙箱。恶意 MCP server 不在范围内（见威胁模型）。
+- **上游 = 外部**：模型 API、第三方 MCP；不在本地控制范围。
+- **桌面 runtime = 可选、更重的边界**：只用于 GUI；不改变"无凭证"原则。
 
-## 4. 沙箱运行时
+## 4. Runtime
 
-### 4.1 v1：Colima + Docker + 自定义桌面镜像
+### 4.1 Native（默认，无 VM）
 
-- **Colima**（Apache-2.0）：在 macOS Apple Silicon 上跑一个 Linux VM（Lima/vz），提供 Docker API。
-- **Docker**：每个 sandbox 一个容器；容器共享 Colima VM 内核。
-- **镜像**：Ubuntu ARM64 + Xfce + Xvfb + noVNC + 常用 CLI（git、node、python、ripgrep）。
-- **隔离故事**：容器是内层，Colima VM 是外层；不挂宿主目录、不挂 Docker socket、不挂 Keychain；网络经 egress proxy，认证经 gateway。
+- macOS `sandbox-exec` / Seatbelt profile（`sandbox-exec` 在新系统仍可用；实现时验证，必要时改用 `sandbox_init` API）。
+- 直接运行 macOS 原生 harness：Codex（Rust）、Claude Code（Node）、DSH（Node）。
+- 每个 sandbox 独立：
+  - workspace 目录（可持久化/共享）；
+  - state 目录（作为沙箱 HOME；harness 配置/会话，持久化）；
+  - cache（共享，只读或读写）；
+  - 环境变量只注入 `NULLKEY_TOKEN`、`NULLKEY_GATEWAY`、`NULLKEY_PROXY`。
+- Seatbelt profile 原则：
+  - `deny default`；
+  - 只允许读系统库、harness 安装目录、workspace/state/cache；
+  - 沙箱 `HOME` 指向 state 目录；拒绝宿主 `$HOME`、`~/.ssh`、`~/.aws`、Keychain、`mach-lookup` 敏感服务；
+  - 允许 `network-outbound` 仅到 `127.0.0.1` 的 gateway/proxy 端口（端口级规则需在实现时验证；不支持则退回 proxy + token + 威胁模型）；
+  - 允许执行白名单内的 harness/shell/git/npm。
+- 隔离级别：进程沙箱，不是 VM。能防 session 泄漏和误读宿主文件；不宣称防住 determined escape。
 
-为什么不是 Docker Desktop：商业使用需要订阅；Colima 是 Apache-2.0，本地优先。  
-为什么不是 microVM：microsandbox / Apple `container` 更未来，但 beta / 桌面 / IPC 有不确定性；v1 先用 Colima 保交付，`SandboxProvider` 留好替换点。
+### 4.2 Desktop（可选）
 
-### 4.2 Provider 接口
+- 虚拟桌面/桌面 app 需要 GUI 环境；macOS 上运行 Linux GUI 需要轻量虚拟化。
+- 只在用户点"Open Desktop"时启动；单独计量，不计入默认 SLO。
+- 仍然没有真实凭证；网络经 proxy/gateway。
+- 如果"完全不用虚拟化"是硬约束，v1 只交付 TUI，desktop 延后。
+
+### 4.3 Provider 接口
 
 ```go
-type SandboxProvider interface {
-    EnsureImage(ctx context.Context, image string) error
+type Runtime interface {
     Create(ctx context.Context, spec SandboxSpec) (Sandbox, error)
     Start(ctx context.Context, id string) error
     Stop(ctx context.Context, id string) error
     Destroy(ctx context.Context, id string) error
-    Exec(ctx context.Context, id string, cmd []string) (ExecResult, error)
-    CopyIn(ctx context.Context, id string, src, dst string) error
+    Exec(ctx context.Context, id string, argv []string) (ExecResult, error)
+    Terminal(ctx context.Context, id string) (PTY, error)
     Desktop(ctx context.Context, id string) (DesktopEndpoint, error)
-    Status(ctx context.Context, id string) (Status, error)
+    Stats(ctx context.Context, id string) (Stats, error)
 }
 ```
 
-`SandboxSpec`：harness、image、cpus、memory、workspace size、env（只有 token）、mounts（只读 harness 缓存）。
+`NativeRuntime` 是 v1 默认；`DesktopRuntime` 可选。
 
-v0.2 可以增加 `MicroVMProvider`（microsandbox / Apple `container`），GUI 和网关不变。
+## 5. GUI 与终端交互
 
-## 5. 凭证路径
+- GUI 本身不是 TUI 风格；默认打开的是 **SSH-client 风格的 Terminal 页**。
+- 终端里运行的是 **harness 自己的 TUI**（Codex TUI、Claude Code TUI、DSH TUI）。
+- `Terminal Service` 用 PTY 启动 shell/harness，WebSocket 推流；前端用 xterm.js 渲染。
+- 支持 resize、复制、全屏、断线重连（可选）。
+- Codex TUI 直接跑在 PTY 里；不需要虚拟桌面。
+- 桌面是独立 tab/window；打开时才创建 desktop runtime。
+- 终端内容不进入模型网关；只有 harness 自己发起的模型请求才走 gateway。
 
-### 5.1 模型调用
+## 6. 凭证路径
+
+### 6.1 模型
 
 ```text
-Harness 配置:
-  base_url = http://gateway:8080/anthropic   (或 /openai)
-  token    = <per-sandbox token>
-
-Harness → Gateway:
-  Authorization: Bearer <per-sandbox token>
+Codex config:
+  base_url = http://127.0.0.1:<gateway>/openai
+  env_key  = NULLKEY_TOKEN
 
 Gateway:
-  1. 校验 token → sandbox_id
-  2. 查 sandbox 绑定的 provider（anthropic/openai/deepseek）
-  3. 从 Keychain 取真实 key
-  4. 替换 Authorization（Anthropic 用 x-api-key，OpenAI 用 Bearer）
-  5. 转发到上游，SSE 流式回传
-
-Harness 永远看不到真实 key。
+  token → sandbox_id
+  取 Keychain 中的 API key 或 OAuth access token
+  注入 Authorization / x-api-key
+  流式回传
 ```
 
-- 每个 harness 有独立的适配器（见 [03-harness-mcp.md](03-harness-mcp.md)），负责把 base URL/token 写进正确的位置。
-- Gateway 不记录请求/响应 body；只记录 provider、model、token 用量、状态码、耗时。
-- 模型白名单：sandbox 只能请求 GUI 里启用的模型。
-- 失败关闭：token 无效、key 缺失、上游 401 → 直接报错，不回退到直连。
+### 6.2 MCP
 
-### 5.1.1 凭证类型与 provider registry
+- 有凭证的 MCP 在宿主侧运行；沙箱配置只有 `http://127.0.0.1:<gateway>/mcp/<id>` + token。
+- stdio-only harness 用 `nullkey-mcp-bridge` 转发到 gateway。
+- Filesystem 等无凭证 MCP 可以在沙箱侧，仅限 workspace。
 
-| `auth_type` | 注入方式 | 典型 provider |
+### 6.3 私有 Git
+
+```text
+sandbox: git remote = http://127.0.0.1:<gateway>/git/github/<owner>/<repo>.git
+gateway: 注入真实凭证 → https://github.com/...
+```
+
+- 支持 clone/fetch/push；策略绑定 repo；token 不进沙箱。
+- SSH git 不支持；用 HTTPS remote。
+
+### 6.4 OAuth
+
+- 宿主侧 OAuth Broker：Authorization Code + PKCE，localhost callback，Keychain 存 access/refresh token。
+- Codex OAuth 为 v1 Must；MCP OAuth（DCR）为 Should；Claude Code 导入为 Should。
+- Gateway 注入 OAuth token；到期前刷新；失败返回 `reauth_required`。
+- **沙箱内不发起登录**。
+
+## 7. Per-sandbox token
+
+- 32 字节随机；Base64URL；只在配置渲染时使用，不显示在 GUI。
+- daemon 只存 SHA-256；绑定 sandbox_id；生命周期 = sandbox。
+- 权限 = 该 sandbox 被允许的模型 provider + MCP 连接 + git repo。
+- 停止/删除立即失效；daemon 重启全部失效（fail closed）。
+- 泄漏影响：sandbox 存活期内消耗配额；可一键撤销。不是长期凭证泄漏。
+
+## 8. Keychain
+
+- Service `com.nullkey.credentials`；Account = credential UUID。
+- 使用 Security.framework 或极小 Swift helper；不要把 key 放进 argv。
+- 元数据 SQLite：id、provider、label、fingerprint、auth_type、oauth_status、expires_at。
+- GUI 只显示 fingerprint 末四位；永不显示明文。
+- OAuth refresh token 同样只存 Keychain。
+
+## 9. 网络
+
+### 9.1 模式
+
+| 模式 | 沙箱路由 | 适用 |
 |---|---|---|
-| `bearer` | `Authorization: Bearer <v>` | OpenAI、DeepSeek、OpenRouter、Groq、Mistral、xAI |
-| `header` | 自定义 header | Anthropic `x-api-key`、Azure OpenAI `api-key` |
-| `basic` | `Authorization: Basic` | 部分 MCP / 数据库 |
-| `query` | URL query | Gemini |
-| `sigv4` | AWS 签名 | Bedrock（v1.1） |
-| `service_account` | GCP JWT | Vertex（v1.1） |
-| `custom_header` | 用户指定 | 通用 endpoint |
+| `offline` | 仅 gateway | 敏感仓库、演示 |
+| `filtered`（默认） | 仅 egress proxy（域名 allowlist） | 日常开发：npm/pip、公开文档、公开 git |
+| `open` | egress proxy 全放行 | 长尾站点，有数据外发风险 |
 
-provider registry 条目：`id, kind(llm|mcp), base_url, auth_type, header_name, models, test_path`。
-
-网关适配器：
-
-- **OpenAI-compatible**：覆盖大多数模型 provider。
-- **Anthropic**：`x-api-key` + Anthropic 版本头。
-- **Gemini / Azure OpenAI**：各自 endpoint 与 header。
-- **Custom**：用户填 base URL + auth 类型 + header 名。
-
-v1 目标 8–10 个模型 provider；MCP 支持静态 token / header / connection string。
-
-### 5.1.2 OAuth
-
-v1 只做"导入宿主已有登录"，不做授权流程：
-
-- **Codex**：读取宿主 `~/.codex/auth.json`（用户授权）→ Keychain → 网关注入；刷新按 Codex 开源实现适配。
-- **Claude Code**：使用 `claude setup-token` 生成的长期 token，或导入宿主 Keychain 中已有的登录 → 网关注入；过期后重新导入。
-- 导入的 token 不进入沙箱；GUI 显示 `connected` / `expired`；过期返回 `reauth_required`。
-
-v1.1：完整宿主侧 broker（PKCE + localhost callback + refresh）与 MCP OAuth（动态客户端注册）。详见 [03-harness-mcp.md](03-harness-mcp.md#6-oauth)。
-
-### 5.2 MCP 调用
-
-**宿主侧 MCP（有凭证）**：
+### 9.2 Native 网络拓扑
 
 ```text
-GUI: 连接 GitHub → 存 token 到 Keychain → 启动宿主侧 GitHub MCP server
-Sandbox 配置:
-  url = http://gateway:8080/mcp/github
-  Authorization: Bearer <per-sandbox token>
-
-Harness → Gateway → 路由到 GitHub MCP server（注入真实 token）→ 结果回传
+sandbox process (Seatbelt)
+  ├── 127.0.0.1:<gateway>   模型 / MCP / git
+  └── 127.0.0.1:<proxy>     HTTP(S)_PROXY，未认证流量
+        │
+        └── egress proxy（宿主进程）── allowlist ──> Internet
 ```
 
-- MCP server 的 stdout/stderr 留在宿主；stderr 捕获并脱敏，不挂进沙箱。
-- Gateway 按连接 ID 路由；一个 sandbox 只能访问 GUI 里启用的连接。
-- 支持两种 transport：
-  - **Streamable HTTP**：harness 直接连 gateway。
-  - **stdio**：沙箱里放一个极小的 `nullkey-mcp-bridge`，把 stdio JSON-RPC 转发到 gateway（同样带 token）。bridge 不含密钥。
-- Tool allowlist：每个连接可以限制可用 tool（例如 GitHub 只允许 `search_repositories` / `get_file_contents`）。
+- Seatbelt 只允许 outbound 到 localhost 的 gateway/proxy 端口；直连公网 IP/DNS 拒绝。
+- 沙箱设置 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:<proxy>`、`NO_PROXY=127.0.0.1,localhost`。
+- 代理只做 CONNECT 隧道 + host/SNI allowlist；**不做 TLS MITM**，不装 CA，不改 header。
+- 认证流量不走通用代理；走 gateway 专用端点。
 
-**沙箱侧 MCP（无凭证）**：
+### 9.3 强制与绕过
 
-- Filesystem 这类不需要密钥的 server 可以直接在沙箱里跑。
-- 它只能看 workspace，不能看宿主。
-
-### 5.3 虚拟桌面
-
-```text
-Sandbox: noVNC 监听 127.0.0.1:<port>
-Host:    Desktop Proxy 把 127.0.0.1:<random> 映射到 sandbox 的 noVNC
-GUI:     iframe / 新标签打开，带一次性 ticket
-```
-
-- 只绑 `127.0.0.1`，不绑 `0.0.0.0`、不暴露 LAN。
-- 一次性 ticket（30 秒有效），防止别人猜端口。
-- 剪贴板同步默认关闭；文件导入/导出走显式按钮。
-- 桌面里的终端可以看到 `NULLKEY_TOKEN`，但看不到真实 key。
-
-### 5.4 CLI / 自定义工具（v1 不做）
-
-`git push`、`aws`、`gh` 这类需要 key 的 CLI 不在 v1 范围。未来用 **credential helper**：
-
-- `git credential helper` 向 daemon 要一个短时、限定 host/repo 的令牌。
-- 令牌进入沙箱，但短时、可撤销、权限窄。
-- 这不是"零密钥"，是"低价值令牌"；在文档里单独标注。
-
-## 6. Per-sandbox token
-
-- 32 字节随机；Base64URL 编码；只在创建时显示给配置渲染器，不显示在 GUI。
-- daemon 只存 `SHA-256(token)`；校验时哈希比对。
-- 绑定 `sandbox_id`；不能跨沙箱使用。
-- 生命周期 = 沙箱生命周期；停止/删除立即失效。
-- 权限 = 该沙箱被允许的模型 provider + MCP 连接。
-- 泄漏后的影响：在沙箱存活期间消耗模型/MCP 配额；可一键撤销。**不是长期 key 泄漏**。
-
-## 7. Keychain
-
-- Service：`com.nullkey.credentials`；Account：credential UUID。
-- 使用 Security.framework（或一个极小的 Swift helper），**不要把 key 放进 argv**（`ps` 可见）。
-- 访问控制：只允许 Nullkey 的签名身份；开发构建会出现系统授权弹窗。
-- 元数据 SQLite：id、provider、label、fingerprint（SHA-256 前 8 字节）、created_at、last_used_at、status。
-- GUI 永不显示明文；只显示 fingerprint 末四位。
-- 删除 key：删 Keychain item + 标记 metadata；下一次调用失败。
-
-## 8. 网络
-
-### 8.1 三种模式
-
-| 模式 | 沙箱路由 | 适用场景 | 默认 |
-|---|---|---|---|
-| `offline` | 仅 `gateway` | 敏感仓库、演示、完全不需要外网 | |
-| `filtered` | 仅 `egress-proxy`（域名 allowlist） | 日常开发：包安装、公开文档、公开 git | ✅ |
-| `open` | `egress-proxy`（全部放行） | 需要访问长尾站点；有数据外发风险 | |
-
-模式在启动时选择；v1 改变模式需要重建沙箱。
-
-### 8.2 拓扑
-
-```text
-Host / Colima VM
-  nullkeyd
-    ├── 127.0.0.1:<api>           GUI / REST
-    ├── UDS                       gateway-bridge
-    └── 127.0.0.1:<desktop>       noVNC proxy
-
-nullkey-internal (internal=true，无外网网关)
-  ├── gateway-bridge:8080         → daemon UDS（模型 / MCP / git）
-  ├── egress-proxy:3128           → 互联网（仅未认证流量）
-  └── sandbox                     （只能访问 gateway / proxy）
-
-nullkey-egress (bridge，有外网)
-  └── egress-proxy（第二块网卡）   → Internet
-```
-
-- 沙箱只接 `nullkey-internal`；该网络没有默认路由，唯一可达的是 `gateway` 和 `proxy`。
-- `egress-proxy` 双网卡；只有它有外网。
-- 沙箱环境：`HTTP_PROXY/HTTPS_PROXY=http://proxy:3128`、`NO_PROXY=gateway,localhost`。
-- DNS：沙箱不配置外网 DNS；proxy 负责解析目标域名。内部名由 Docker DNS 解析。
-- 除 noVNC 外，v1 不发布 sandbox 端口；noVNC 通过 `127.0.0.1:<random>` 映射 + 一次性 ticket。
-
-### 8.3 强制与绕过
-
-- `internal` 网络没有外部网关：直连公网 IP、直连外部 DNS 都失败。
-- 不读取 proxy 环境的程序会直接失败（fail closed），不会"绕过"。
-- v1.1 可在 sandbox 内用 iptables 把 80/443 REDIRECT 到 proxy，兼容不识别 proxy 的程序（需要 `NET_ADMIN`）。
-- **代理不做 TLS MITM**：HTTPS 走 CONNECT 隧道，只能看到目标 host/SNI，不能改 header，因此**不能注入凭证**。
-- 认证流量必须走 gateway：模型、MCP、git。
-
-### 8.4 认证流量
-
-| 流量 | 路径 | 凭证位置 |
-|---|---|---|
-| 模型 API | `gateway/{anthropic,openai}` | Keychain → gateway |
-| MCP | `gateway/mcp/<id>` | Keychain → 宿主 MCP server |
-| Git（HTTPS） | `gateway/git/<provider>/<owner>/<repo>.git` | Keychain → gateway |
-| 包管理器 | `proxy` → registry | 无（公开 registry） |
-| 公开网页/git clone | `proxy` | 无 |
-| 私有 `git push` | gateway git proxy | Keychain → gateway |
-| 其他认证 CLI（gh/aws） | v1 不支持 | 后续 credential helper |
-| SSH git | v1 不支持 | 用 HTTPS remote |
-
-**Git smart HTTP proxy**（v1 Should）：
-
-```text
-sandbox:
-  git remote set-url origin http://gateway:8080/git/github/alice/demo.git
-
-gateway:
-  /git/github/alice/demo.git → https://github.com/alice/demo.git
-  注入 Authorization: Bearer <real token>
-  透传 info/refs、git-upload-pack、git-receive-pack
-```
-
-- 支持 clone / fetch / push；策略绑定 repo。
-- token 不进入 sandbox；git 配置里只有 gateway URL + per-sandbox token。
-- 需要处理重定向、chunked、大包体；Go `httputil.ReverseProxy` 可覆盖大部分。
-
-### 8.5 策略与日志
-
-- `filtered` 默认 allowlist：npm、PyPI、GitHub、常见文档站；可按沙箱编辑。
-- `open` 全部放行，GUI 显示警告。
+- Seatbelt 的 network 规则是主控制；proxy 是唯一外网出口。
+- 不识别 proxy 的程序失败（fail closed）。
+- v1.1 可加本地透明重定向，兼容不识别 proxy 的程序。
 - 代理日志：时间、host/SNI、字节数、状态；不记录内容。
-- 限流/大小限制；异常目标告警。
-- 审计事件记录 mode、目标、是否放行。
-- v1 代理实现：Squid（成熟）或自写 Go CONNECT proxy；只做 host/SNI allowlist，不做 MITM。
 
-### 8.6 边界
+### 9.4 边界
 
-- **网络不是 key 控制**：key 控制在 gateway；沙箱有网也拿不到 key。
-- `filtered` 降低数据外泄面；`open` 允许外发；prompt injection / 恶意 Agent 不在威胁模型内。
-- 浏览器登录后的 cookie 是另一类凭证；v1 建议只做公开浏览，登录态需要单独设计（临时 profile、停止即删、或禁用）。
+- 网络不是 key 控制；key 控制在 gateway。
+- `filtered` 降低数据外泄面；`open` 明确警告；prompt injection/恶意 Agent 不在威胁模型内。
+- 浏览器登录 cookie 是另一类凭证；v1 只建议公开浏览。
 
-## 9. 数据模型与 API
+## 10. 状态与挂载
+
+- 三类状态：`workspace`（项目文件）、`state`（harness 配置/会话）、`cache`（harness/npm/pip 缓存）。
+- 默认持久化；workspace 可共享（rw 独占 / ro 共享）；cache 全局共享。
+- 自定义 host mount 需显式确认；禁止 `$HOME`、`~/.ssh`、`~/.aws`、Keychain。
+- 详细目录、锁、重置策略见 [07-state-and-mounts.md](07-state-and-mounts.md)。
+
+## 11. 数据模型（摘要）
 
 ```sql
-credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, base_url, header_name, oauth_status, oauth_expires_at, created_at, last_used_at, status)
+workspaces(id, name, root_path, mode, created_at, last_used_at)
+states(id, harness_id, path, created_at, last_used_at)
+sandboxes(id, harness_id, workspace_id, state_id, runtime, network_mode, status, token_hash, pid, created_at)
+credentials(id, provider_id, label, keychain_account, fingerprint, auth_type, oauth_status, expires_at)
 mcp_connections(id, server_id, label, auth_type, keychain_account, config_json, status)
-sandboxes(id, harness_id, status, network_mode, token_hash, container_id, desktop_port, created_at, last_used_at)
 audit_events(id, ts, sandbox_id, type, detail_json)
 ```
 
-- `config_json` 只存非敏感配置（scopes、repo allowlist、tool allowlist）。
-- `detail_json` 不含 key/token 明文。
+完整 API、错误码、WebSocket/SSE 见 [08-api-contract.md](08-api-contract.md)。
 
-API 草图：
+## 12. 生命周期
 
-```text
-GET    /api/harnesses
-POST   /api/harnesses/:id/install
-GET    /api/credentials
-POST   /api/credentials              {provider_id,label,value,auth_type,base_url,header_name}
-GET    /api/credentials/importable
-POST   /api/credentials/import       {source}
-POST   /api/credentials/:id/reimport
-POST   /api/credentials/:id/test
-DELETE /api/credentials/:id
+1. `POST /sandboxes`：选择 harness/workspace/state/network_mode。
+2. 生成 per-sandbox token；渲染配置（token 从 env 注入，不落配置文件）。
+3. 创建/复用 workspace、state、cache；加锁。
+4. 启动进程，套 Seatbelt profile；启动 PTY。
+5. 返回 terminal WebSocket ticket；可选 desktop ticket。
+6. 停止：撤销 token、停进程、释放锁；state/workspace 保留。
+7. 删除：删除 sandbox 记录；用户可选删 state/workspace。
 
-GET    /api/mcp/catalog
-GET    /api/mcp/connections
-POST   /api/mcp/connections          {server_id,label,auth_type,value,config}
-POST   /api/mcp/connections/:id/test
-DELETE /api/mcp/connections/:id
-
-POST   /api/sandboxes                {harness_id,network_mode}
-POST   /api/sandboxes/:id/stop
-DELETE /api/sandboxes/:id
-GET    /api/sandboxes/:id/desktop
-POST   /api/sandboxes/:id/scan
-
-GET    /api/audit
-```
-
-## 10. 生命周期
-
-### 创建
-
-1. GUI 选择 harness，`POST /api/sandboxes`。
-2. daemon 生成 sandbox_id + token；插入 DB。
-3. 确保镜像（首次拉取/构建）。
-4. 创建 ephemeral home + workspace volume。
-5. 渲染 harness 配置、MCP 配置（只有 gateway URL + token）。
-6. 创建容器（internal network，只读 rootfs，非 root，资源限制）。
-7. 启动 Xvfb + noVNC + harness。
-8. 健康检查（gateway 可达、noVNC 就绪）。
-9. 返回 desktop URL（带 ticket）。
-
-### 停止 / 删除
-
-- 停止：撤销 token → 停止容器 → 默认删除 home/transcript → 保留 workspace（可选）。
-- 删除：删除容器 + volumes + DB 记录 + token。
-- daemon 重启：**所有 sandbox token 失效**（fail closed）；GUI 提示重建沙箱。
-
-## 11. 失败模式
+## 13. 失败模式
 
 | 情况 | 行为 |
 |---|---|
-| Gateway 不可用 | 模型/MCP 调用 502；不直连、不回退 |
-| token 无效/过期 | 401；GUI 提示重建沙箱 |
-| key 缺失/被撤销 | 424 `credential_unavailable`；提示去 Keys 添加 |
-| MCP server 崩溃 | 503；不自动改用其他 server |
-| 上游 401/429 | 透传状态；不重试风暴 |
-| Colima 未启动 | GUI 引导启动；不静默失败 |
-| 桌面端口冲突 | 重新分配随机端口 |
-| 沙箱健康检查失败 | 标记 failed；保留日志；允许重试 |
+| gateway 不可用 | 模型/MCP/git 502；不直连 |
+| token 无效 | 401；重建 sandbox |
+| OAuth 过期 | 401 `reauth_required`；GUI 重新登录 |
+| proxy 不可用 | 未认证流量失败；认证流量不受影响 |
+| workspace 被占用 | 409；提示只读挂载或等待 |
+| Seatbelt profile 失败 | 启动失败；不降级为无沙箱运行 |
+| desktop runtime 不可用 | TUI 正常；桌面按钮报错 |
 
-## 12. 加固清单
+## 14. 加固
 
-- 容器：非 root、只读 rootfs、`/tmp` tmpfs、`cap-drop ALL`、`no-new-privileges`、pids/memory 限制。
-- 不挂：宿主目录、`~/.ssh`、`~/.aws`、`~/.config/gh`、Keychain、Docker socket。
-- 网络：internal 无默认路由；只有 `gateway` 与 `egress-proxy`；认证流量走 gateway。
-- 镜像：固定 digest；无 secret layer；`gitleaks` 扫描；最小化。
-- 日志：统一 redaction；不记录 body；MCP stderr 捕获。
-- core dump：沙箱内禁用；宿主 daemon 也禁用（避免内存里的 key 落盘）。
-- noVNC：127.0.0.1 + 一次性 ticket；不要放到 LAN。
-- 剪贴板：默认关闭；文件传输显式。
-- 停止：撤销 token + 删除 home；workspace 保留需用户选择。
+- Seatbelt profile 最小权限；`deny default`。
+- 不挂宿主 home/SSH/Keychain；workspace/state 之外只读。
+- token 只通过 env 注入；不写配置文件。
+- 日志/审计/终端录制统一脱敏；core dump 关闭。
+- harness 安装目录只读；版本/哈希固定。
+- egress proxy allowlist；`open` 模式显式警告。
+- 私有 git 走 gateway；不把 PAT 写进 `.git/config`。
 
-## 13. 为什么不是其它方案
+## 15. 为什么不是 VM / 容器
 
-| 方案 | 为什么不够 |
+| 方案 | 为什么不选为默认 |
 |---|---|
-| 把 key 放 env / `.env` | session 泄漏（transcript、日志、`env`）直接带走 key |
-| 只做模型占位符 | 需要模型配合 + schema 兼容；主流 harness/MCP 用 base URL 就能透明解决 |
-| 只做出口代理（TLS MITM） | 复杂、证书问题；MCP/harness 配置仍然要填东西 |
-| 只做容器隔离 | 隔离不等于没密钥；容器里照样能 `env` |
-| 用 Docker Desktop | 商业许可；Colima 更轻、Apache-2.0 |
-| v1 直接上 microVM | beta/桌面/IPC 风险；先用 Colima 保交付，接口留好 |
+| Colima / Docker Desktop | 需要 Linux VM；启动/内存重；与"轻量"目标冲突 |
+| microVM（microsandbox 等） | 更轻，但仍是 VM；桌面/IPC 有不确定性；可作为可选 desktop 后端 |
+| 纯容器（macOS） | 仍然依赖 VM；没有额外收益 |
+| 纯 Seatbelt | 默认选它：无 VM、启动快；隔离弱于 VM，但匹配 session 泄漏威胁模型 |
+| 只断网 | 局限太大；网络与 key 隔离正交 |
 
-## 14. Harness 集成摘要
-
-每个 harness 一个 adapter，负责：
-
-1. 安装（宿主缓存、版本/哈希、只读挂载）。
-2. 配置渲染（base URL、per-sandbox token、MCP 配置路径）。
-3. 启动命令 + 环境变量（禁用自动更新/遥测）。
-4. 健康检查。
-
-具体配置见 [03-harness-mcp.md](03-harness-mcp.md)。
+> 默认不用 VM；如果评审要求"认证级强隔离"，那是另一个产品目标，需要 VM 后端，单独评估。

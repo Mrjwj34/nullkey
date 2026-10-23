@@ -1,157 +1,150 @@
 # 04 · 三天实施计划
 
-> 假设：3 人 × 3 天 × 10 小时。只有 2 人时，砍掉 Should，保 Must。
+> 3 人 × 3 天 × 10 小时。只有 2 人时，砍掉 Should，保 Must。
+>
+> GUI 由独立团队按 [API 契约](08-api-contract.md) 并行实现；本计划只覆盖后端/runtime。
 
 ## 1. 范围
 
-### Must（不做完不上台）
+### Must
 
-- 本地 GUI（React + daemon API）+ Colima/Docker 沙箱 + 虚拟桌面。
-- Egress proxy + 三档网络（`offline` / `filtered` 默认 / `open`）；沙箱无默认路由。
-- macOS Keychain 全局密钥：添加、测试、删除；provider registry 覆盖 8–10 个模型 provider + 通用 auth 类型。
-- 模型网关：per-sandbox token → 真实 key；Claude Code 跑通。
-- 宿主侧 MCP 网关 + GitHub MCP；沙箱配置零敏感信息。
-- 沙箱启动/停止/删除；token 撤销；桌面访问。
-- 审计事件 + "无密钥"检查。
-- 一键启动脚本 + 3 分钟演示。
+- Native runtime（Seatbelt，无 VM）+ PTY + Terminal WebSocket。
+- Codex 跑通：API key + 宿主 OAuth。
+- 全局凭证：Keychain、per-sandbox token、撤销。
+- 模型 gateway；GitHub MCP；egress proxy + `filtered` 默认。
+- workspace / state / cache 持久化；至少一个共享/复用场景。
+- API 契约冻结；基础审计；SLO 基线。
+- 3 分钟演示。
 
 ### Should
 
-- Codex、DSH 适配。
-- Codex/Claude 宿主登录导入（实验）。
-- Git smart HTTP proxy（私有 repo clone/push，token 不进沙箱）。
-- Filesystem MCP（沙箱侧）+ Slack/Notion 之一。
-- Key 轮换、审计导出。
-- Tauri 外壳。
-- 空闲自动停止。
+- Claude Code / DSH。
+- MCP OAuth（DCR）。
+- 私有 Git smart HTTP proxy。
+- 可选 desktop runtime + Codex app。
+- 第二个 MCP（Slack/Notion）。
+- 状态只读共享、快照/回滚。
 
 ### Won't
 
-- 完整 OAuth 授权流程；沙箱内登录；MCP OAuth（v1.1）。
+- 默认 VM / Colima / Docker Desktop。
 - Windows / Linux host。
-- 多用户、公网访问。
-- microVM / 认证级强隔离。
-- 原生 `.dmg`、签名、自动更新。
-- 完整 MCP catalog。
+- 多租户、公网访问。
+- 完整桌面 app catalog。
 - prompt injection / 恶意 Agent 防御。
+- 按 harness/MCP 的凭证 scope。
 
 ## 2. 分工
 
 | 角色 | 负责 | 产出 |
 |---|---|---|
-| A · 平台/沙箱 | Colima/Docker、镜像、桌面、端口、生命周期 | `SandboxProvider`、镜像、noVNC 代理 |
-| B · 安全/网关 | Keychain、模型网关、MCP 网关、token、审计 | `nullkeyd` 核心、网关、redaction |
-| C · GUI/适配/演示 | React GUI、harness 适配、MCP 连接、演示 | 页面、配置模板、演示脚本 |
+| A · Runtime | Seatbelt profile、PTY、进程生命周期、workspace/state | `NativeRuntime`、终端服务 |
+| B · 安全/网关 | Keychain、模型 gateway、OAuth broker、MCP gateway、token | `nullkeyd` 核心、OAuth、审计 |
+| C · 网络/适配/演示 | egress proxy、Codex 适配、GitHub MCP、SLO/演示 | 适配器、proxy、benchmark、演示脚本 |
 
-第 1 小时冻结接口：`SandboxProvider`、`/api/sandboxes`、token 格式、审计字段。
+第 1 小时冻结：API 契约、`Runtime` 接口、token 格式、错误码。
 
 ## 3. 排期
 
-### Day 1 · 打通"无密钥沙箱 + 模型调用"
+### Day 1 · Native TUI + Codex
 
 | 时间 | A | B | C |
 |---|---|---|---|
-| 09:00–10:00 | 仓库、接口冻结 | 同左 | 同左 |
-| 10:00–12:00 | Colima + Docker + Webtop/noVNC + egress proxy 骨架 | daemon 骨架、Keychain helper | GUI 骨架（Home/Keys） |
-| 12:00 | **Gate 1：浏览器能看到沙箱桌面；直连外网失败、proxy/gateway 可达** | | |
-| 13:00–18:00 | SandboxProvider、token 注入、端口映射 | 模型网关（Anthropic/OpenAI）、key 存取 | Claude Code 安装/配置模板；GUI 启动流程 |
-| 18:00–20:00 | 联调 | 流式转发、错误处理 | 端到端：Claude Code 发一条消息 |
-| 20:00 | **M1：Claude Code 在沙箱里通过网关调用模型；沙箱内只有 token** | | |
+| 09:00–10:00 | API 契约冻结、仓库骨架 | 同左 | 同左 |
+| 10:00–12:00 | Seatbelt profile、PTY、Terminal WebSocket | Keychain helper、daemon 骨架 | Codex 安装/配置模板、egress proxy 骨架 |
+| 12:00 | **Gate 1：Terminal 能进 shell；Seatbelt 阻止读宿主 home/Keychain** | | |
+| 13:00–18:00 | Sandbox 生命周期、workspace/state、token env | 模型 gateway + OAuth broker 骨架 | Codex 跑通 API key；网络 `filtered` |
+| 18:00–20:00 | 联调 | 流式转发、错误处理 | Codex 发一条消息；扫描无 key |
+| 20:00 | **M1：Codex TUI 通过 gateway 调模型；沙箱只有 token** | | |
 
-**M1 验收**：GUI 启动沙箱 → 桌面 → Claude Code 回一句话 → 沙箱 `env` 只有 `NULLKEY_TOKEN` → 宿主日志无 key。
+**M1 验收**：GUI/curl 启动 sandbox → Terminal 进入 Codex TUI → 回复一句话 → `env`/配置只有 token → 扫描 0。
 
-### Day 2 · MCP 与多 harness
-
-| 时间 | A | B | C |
-|---|---|---|---|
-| 09:00–12:00 | 桌面体验（分辨率、剪贴板关闭） | MCP Gateway、GitHub MCP、tool allowlist | MCP 配置渲染；GitHub 连接 UI |
-| 12:00 | **Gate 2：Claude Code 通过 MCP 调用 GitHub，配置里无 token** | | |
-| 13:00–17:00 | 资源限制、停止/删除、卷清理 | token 撤销、审计、日志 redaction | Codex 适配；DSH 适配（至少一个） |
-| 17:00–20:00 | 联调 | "无密钥"检查 | 演示脚本 v1 |
-| 20:00 | **M2：2 个 harness + 1 个 MCP + 停止即失效** | | |
-
-**M2 验收**：Claude Code + Codex（或 DSH）都能启动；GitHub MCP 可用；停止后重放 → 401；撤销 key → 失败。
-
-### Day 3 · 加固、验证、彩排
+### Day 2 · OAuth + MCP + 状态
 
 | 时间 | A | B | C |
 |---|---|---|---|
-| 09:00–12:00 | 加固（只读、cap-drop、无挂载、core dump） | 审计导出、错误码、扫描脚本 | 红队检查、演示素材 |
-| 12:00 | **Gate 3：所有 Must 检查通过，演示计时** | | |
-| 13:00–15:00 | 彩排 ×2、录屏 | 文档/README | 评审要点 |
+| 09:00–12:00 | workspace 共享/锁、state 持久化 | OAuth Broker（PKCE、callback、Keychain、refresh） | GitHub MCP + MCP gateway |
+| 12:00 | **Gate 2：Codex 用宿主 OAuth 调模型；GitHub MCP 可用；配置无 token** | | |
+| 13:00–17:00 | 资源/并发/统计指标 | token 撤销、审计、日志脱敏 | Git proxy（Should）或第二个 MCP；OAuth 错误处理 |
+| 17:00–20:00 | SLO benchmark v1 | 状态重置/清理 | 演示脚本 v1 |
+| 20:00 | **M2：OAuth + MCP + 持久化 state 跑通** | | |
+
+### Day 3 · 加固、SLO、演示
+
+| 时间 | A | B | C |
+|---|---|---|---|
+| 09:00–12:00 | Seatbelt 收紧、core dump、路径校验 | 审计导出、失败模式、OAuth 过期 | Claude/DSH 或 MCP OAuth（二选一）；SLO 复测 |
+| 12:00 | **Gate 3：Must 全过；SLO 达标；演示计时** | | |
+| 13:00–15:00 | 彩排 ×2、录屏 | 文档/API 契约 | 评审要点 |
 | 15:00–17:00 | Buffer | Buffer | Buffer |
-| 17:00–18:00 | 最终检查：一键、离线、备份视频 | | |
+| 17:00–18:00 | 最终检查：一键、离线录屏、清理假 key | | |
 | 18:00 | **M3** | | |
 
-## 4. 里程碑与 Gate
+## 4. Gate
 
 | Gate | 时间 | 通过标准 | 不通过 |
 |---|---|---|---|
-| G1 沙箱 | D1 12:00 | 桌面可见；无默认外网路由；proxy/gateway 可达；无宿主挂载 | 换 Docker Desktop/Webtop 镜像；Colima 2 小时不通即切换 |
-| G2 MCP | D2 12:00 | Claude Code 通过网关调用 GitHub；配置只有 token | 先做 Filesystem MCP（无凭证），GitHub 放 Should |
-| G3 演示 | D3 12:00 | Must 全过；3 分钟不超时 | 砍 Codex/DSH，保 Claude Code + GitHub + 扫描 |
+| G1 Runtime | D1 12:00 | Terminal 可用；Seatbelt 阻断宿主 home/Keychain | 先用 `sandbox-exec` 最小 profile，不要等完美 |
+| G2 OAuth/MCP | D2 12:00 | Codex OAuth + GitHub MCP 可用；配置无 secret | OAuth 降级为 API key + 导入；MCP 先 Filesystem |
+| G3 演示 | D3 12:00 | Must 全过；SLO 达标；3 分钟不超时 | 砍 Claude/DSH、Git proxy、desktop |
 
-**底座以可交付为先**：Colima 网络 2 小时不通即切换 Docker Desktop（如果已安装）；`SandboxProvider` 保证切换成本低。
+**不要赌**：Seatbelt network 规则 2 小时验证不通，就退回"proxy + token + 威胁模型"（不做端口级强隔离），继续主线。
 
 ## 5. 演示脚本（3 分钟）
 
 | 时间 | 画面 | 动作/台词 |
 |---|---|---|
 | 0:00 | 标题 | "Agent 很方便，但 session 一泄漏，key 就没了。" |
-| 0:15 | 传统方案 | 终端里 `.env` / `env` 直接看到 key；transcript 里也有。 |
-| 0:35 | Nullkey GUI | Keys 页面：Anthropic、GitHub 已配置，只显示 fingerprint。 |
-| 0:50 | 启动 | 选 Claude Code → 启动 → 桌面出现。 |
-| 1:10 | 正常任务 | 让 Claude Code "搜一下 GitHub 上 X 项目并总结"；模型 + MCP 都工作。 |
-| 1:22 | 网络不残废 | 沙箱里 `npm install` / `curl https://docs...` 可用；`curl https://1.1.1.1` 失败。 |
-| 1:35 | 沙箱内检查 | 终端 `env`、`cat ~/.claude.json`、`grep -R "sk-" ~`：只有 `NULLKEY_TOKEN`。 |
-| 1:55 | 泄漏演练 | 把 `~/.claude` 打包下载，打开：transcript 只有 token。 |
-| 2:10 | 撤销 | GUI 停止沙箱；桌面里的请求失败；重启后新 token。 |
-| 2:25 | 扫描 | 点"扫描密钥"→ 0 命中。 |
-| 2:35 | 架构 | 一张图：key 在 Keychain，网关注入，沙箱只有 token。 |
-| 2:50 | 边界 | "Nullkey 不防 prompt injection；保证 key 不在沙箱。" |
+| 0:15 | 传统方案 | `.env` / `env` 直接看到 key；transcript 里也有。 |
+| 0:35 | Nullkey GUI | Credentials：Codex OAuth、GitHub 已连接；只显示 fingerprint。 |
+| 0:50 | 启动 | 选 Codex → 启动 → 直接进入 Codex TUI（SSH-client 风格终端）。 |
+| 1:10 | 正常任务 | 让 Codex 改一个文件、跑测试；模型 + GitHub MCP 工作。 |
+| 1:30 | 网络不残废 | `npm install` / `curl docs` 可用；`curl 1.1.1.1` 失败。 |
+| 1:45 | 沙箱检查 | `env`、`cat ~/.codex/config.toml`、`grep -R "sk-"`：只有 token。 |
+| 2:00 | 持久化 | 停止 → 重启：workspace/state 还在；token 已轮换。 |
+| 2:15 | 撤销 | 撤销 Codex 凭证 → 下一次调用失败。 |
+| 2:30 | 扫描 | "扫描凭证" → 0 命中。 |
+| 2:40 | 架构 | key 在 Keychain，gateway 注入，沙箱只有 token。 |
+| 2:50 | 边界 | "不防 prompt injection；保证凭证不在沙箱。" |
 | 3:00 | 结束 | "Session 可以泄漏，key 不会。" |
 
 演示前：
 
-- [ ] 用假 key 彩排；真实 key 只在最后一次用，演示后撤销。
-- [ ] 准备离线录屏（Colima/GitHub/模型都可能挂）。
-- [ ] 清理终端历史、GUI 日志，避免真实 key 入镜。
-- [ ] 提前构建镜像，避免现场拉取。
+- [ ] 假 key/测试 OAuth 彩排；真实凭证最后才用，演示后撤销。
+- [ ] 录屏兜底（模型/GitHub/OAuth 都可能挂）。
+- [ ] 清理终端历史、日志、截图。
+- [ ] 提前安装 Codex/构建 proxy。
 
 ## 6. 风险
 
 | 风险 | 概率 | 影响 | 预案 |
 |---|---|---|---|
-| Colima 内网/端口不通 | 中 | 高 | 换 Docker Desktop；或 bridge 容器 + host.docker.internal |
-| Egress proxy 规则太严/太松 | 中 | 中 | 默认 allowlist 覆盖 registry/GitHub/docs；GUI 可切 `open` |
-| TLS/代理兼容性 | 中 | 中 | 只用 CONNECT、不做 MITM；不识别 proxy 的程序失败并提示 |
-| arm64 桌面镜像难搞 | 中 | 高 | 自建 Debian + Xfce + noVNC；或先用 headless + 截图 |
-| Claude Code 配置字段变化 | 中 | 中 | 固定版本；适配器 smoke test；降级到 `ANTHROPIC_BASE_URL` |
-| MCP HTTP transport 不兼容 | 中 | 中 | 用 stdio bridge；先做 Filesystem |
-| OAuth 范围膨胀 | 高 | 高 | v1 只做广谱 key + 可选导入；完整流程放 v1.1 |
-| 模型/网络延迟 | 中 | 中 | 预热、缓存、录屏 |
-| 时间不够 | 高 | 高 | 砍 Codex/DSH/Slack；保 Claude Code + GitHub + 扫描 |
-| 评审问"能防注入吗" | 高 | 中 | 明确边界：不防；产品解决 session 泄漏 |
+| Seatbelt network 规则不够细 | 中 | 高 | 先做 proxy + token；端口级隔离放 v1.1 |
+| PTY/终端兼容性 | 中 | 中 | 用 xterm.js + `creack/pty`；先保 shell，再保 Codex |
+| Codex 配置字段变化 | 中 | 中 | 固定版本 + smoke test |
+| OAuth provider 限制/条款 | 中 | 高 | Codex 优先；失败降级 API key/导入 |
+| MCP HTTP transport 不兼容 | 中 | 中 | stdio bridge；先 Filesystem |
+| 内存/启动不达标 | 低 | 中 | native 本身轻；先测 Codex RSS/启动 |
+| 时间不够 | 高 | 高 | 砍 Claude/DSH、Git proxy、desktop |
 
 ## 7. 验收清单
 
-- [ ] GUI 能添加/测试/删除 key，永不显示明文。
-- [ ] 能启动/停止/删除沙箱；桌面可访问。
-- [ ] 沙箱无默认外网路由（直连 IP 失败）；`filtered` 下 allowlist 可用。
-- [ ] 沙箱无宿主挂载（`mount`/`ls` 检查）。
-- [ ] Claude Code 通过网关调用模型。
-- [ ] Claude Code 通过网关调用 GitHub MCP。
-- [ ] 沙箱配置只有 `NULLKEY_TOKEN`。
-- [ ] 停止沙箱后 token 失效。
-- [ ] 撤销 key 后调用失败。
-- [ ] 审计有事件，无 key 明文。
-- [ ] "扫描密钥" 0 命中。
-- [ ] 一键启动 + 离线录屏。
+- [ ] Terminal 能进入 Codex TUI；输入/输出/resize 正常。
+- [ ] 沙箱内 `env`/配置只有 `NULLKEY_TOKEN`。
+- [ ] 沙箱读不到宿主 `$HOME`/Keychain。
+- [ ] Codex 通过 gateway 调模型（API key 或 OAuth）。
+- [ ] GitHub MCP 通过 gateway 调用。
+- [ ] `filtered` 下 npm/公开文档可用；直连 IP 失败。
+- [ ] workspace/state 重启后还在；token 轮换。
+- [ ] 停止/撤销后调用失败。
+- [ ] 审计无凭证明文；扫描 0。
+- [ ] SLO 基线达标（见 [slo.md](../slo.md)）。
+- [ ] API 契约与 GUI 对齐。
 
 ## 8. 交付物
 
-- 代码仓库（一键 `make dev` / `docker compose up`）。
-- README + docs/。
+- 代码仓库（`make dev`）。
+- README + docs/ + `slo.md` + API 契约。
 - 3 分钟演示视频 + 离线备份。
-- 红队/检查报告（截图）。
+- SLO benchmark 结果。
 - 评审 PPT（问题、边界、架构、演示、路线图）。
