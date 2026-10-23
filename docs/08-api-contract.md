@@ -5,6 +5,8 @@
 > Base URL：`http://127.0.0.1:<port>/api/v1`
 >
 > 认证：`Authorization: Bearer <daemon-token>`（启动时由 GUI/launcher 注入；只绑 127.0.0.1）
+>
+> OpenAPI：[../api/openapi.yaml](../api/openapi.yaml)
 
 ## 1. 约定
 

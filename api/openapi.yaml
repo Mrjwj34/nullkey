@@ -1,0 +1,1742 @@
+openapi: 3.0.3
+info:
+  title: Nullkey Local API
+  version: 0.1.0
+  description: |
+    Local-only API between the Nullkey daemon and GUI.
+    Base URL is bound to 127.0.0.1. All requests require a bearer token
+    injected by the launcher. Terminal and service-tunnel WebSockets are
+    documented as protocol extensions on their ticket endpoints.
+servers:
+  - url: http://127.0.0.1:{port}/api/v1
+    variables:
+      port:
+        default: "49152"
+security:
+  - bearerAuth: []
+tags:
+  - name: system
+  - name: harnesses
+  - name: apps
+  - name: workspaces
+  - name: states
+  - name: sandboxes
+  - name: credentials
+  - name: oauth
+  - name: mcp
+  - name: audit
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '500':
+          $ref: '#/components/responses/Internal'
+
+  /capabilities:
+    get:
+      tags: [system]
+      summary: Runtime and feature capabilities
+      responses:
+        '200':
+          description: Capabilities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /harnesses:
+    get:
+      tags: [harnesses]
+      summary: List harnesses
+      responses:
+        '200':
+          description: Harnesses
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Harness'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /harnesses/{id}/install:
+    post:
+      tags: [harnesses]
+      summary: Install a pinned harness version
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: string
+      responses:
+        '202':
+          description: Install job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{job_id}:
+    get:
+      tags: [harnesses]
+      summary: Get job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps:
+    get:
+      tags: [apps]
+      summary: List desktop app catalog
+      responses:
+        '200':
+          description: Apps
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/install:
+    post:
+      tags: [apps]
+      summary: Install a desktop app
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '202':
+          description: Install job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/apps/{app_id}/launch:
+    post:
+      tags: [apps]
+      summary: Launch a desktop app in a sandbox
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: app_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Launch job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+        '501':
+          $ref: '#/components/responses/DesktopUnavailable'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces:
+    get:
+      tags: [workspaces]
+      summary: List workspaces
+      responses:
+        '200':
+          description: Workspaces
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Workspace'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [workspaces]
+      summary: Create a workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces/{id}:
+    get:
+      tags: [workspaces]
+      summary: Get a workspace
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [workspaces]
+      summary: Delete a workspace
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: delete_files
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Deleted
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces/{id}/reset:
+    post:
+      tags: [workspaces]
+      summary: Reset workspace files (dangerous)
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+      responses:
+        '200':
+          description: Reset
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces/{id}/files:
+    get:
+      tags: [workspaces]
+      summary: List files for artifact review
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: path
+          in: query
+          schema:
+            type: string
+            default: ''
+      responses:
+        '200':
+          description: File list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FileEntry'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces/{id}/file:
+    get:
+      tags: [workspaces]
+      summary: Read a file for artifact review
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileContent'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /workspaces/{id}/diff:
+    get:
+      tags: [workspaces]
+      summary: Workspace git diff
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Diff
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diff'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /states:
+    get:
+      tags: [states]
+      summary: List harness states
+      parameters:
+        - name: harness_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: States
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/State'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [states]
+      summary: Create a harness state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [harness_id]
+              properties:
+                harness_id:
+                  type: string
+                name:
+                  type: string
+                  default: default
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /states/{id}:
+    delete:
+      tags: [states]
+      summary: Delete a state
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '204':
+          description: Deleted
+        default:
+          $ref: '#/components/responses/Error'
+
+  /states/{id}/reset:
+    post:
+      tags: [states]
+      summary: Reset a state
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+      responses:
+        '200':
+          description: Reset
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes:
+    get:
+      tags: [sandboxes]
+      summary: List sandboxes
+      responses:
+        '200':
+          description: Sandboxes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Sandbox'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [sandboxes]
+      summary: Create and start a sandbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}:
+    get:
+      tags: [sandboxes]
+      summary: Get a sandbox
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Sandbox
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [sandboxes]
+      summary: Delete a sandbox
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: delete_state
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: delete_workspace
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Deleted
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/stop:
+    post:
+      tags: [sandboxes]
+      summary: Stop a sandbox
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/terminal:
+    post:
+      tags: [sandboxes]
+      summary: Mint a terminal WebSocket ticket
+      description: |
+        Connect to ws_url with the ticket. Messages are JSON:
+        {type: input|resize|ping}, server sends {type: output|exit|error}.
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Terminal ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalTicket'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/desktop:
+    post:
+      tags: [sandboxes]
+      summary: Open the optional virtual desktop
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Desktop ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopTicket'
+        '501':
+          $ref: '#/components/responses/DesktopUnavailable'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/services:
+    get:
+      tags: [sandboxes]
+      summary: List declared services (WebUI/preview)
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Service'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/services/{service_id}/ticket:
+    post:
+      tags: [sandboxes]
+      summary: Mint a loopback service-tunnel ticket
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTicket'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/stats:
+    get:
+      tags: [sandboxes]
+      summary: Sandbox resource stats
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sandboxes/{id}/scan:
+    post:
+      tags: [sandboxes]
+      summary: Scan for credential material in the sandbox
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Scan result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /providers:
+    get:
+      tags: [credentials]
+      summary: List provider registry entries
+      responses:
+        '200':
+          description: Providers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /credentials:
+    get:
+      tags: [credentials]
+      summary: List credentials (never returns plaintext)
+      responses:
+        '200':
+          description: Credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Credential'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [credentials]
+      summary: Store an API key/token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCredentialRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /credentials/{id}:
+    delete:
+      tags: [credentials]
+      summary: Revoke a credential
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '204':
+          description: Revoked
+        default:
+          $ref: '#/components/responses/Error'
+
+  /credentials/{id}/test:
+    post:
+      tags: [credentials]
+      summary: Test a credential
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/providers:
+    get:
+      tags: [oauth]
+      summary: List OAuth providers
+      responses:
+        '200':
+          description: OAuth providers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OAuthProvider'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/start:
+    post:
+      tags: [oauth]
+      summary: Start a host-side OAuth flow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthStartRequest'
+      responses:
+        '200':
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthStart'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/callback:
+    get:
+      tags: [oauth]
+      summary: OAuth browser callback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HTML page that can be closed
+          content:
+            text/html:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/flows/{flow_id}:
+    get:
+      tags: [oauth]
+      summary: Poll an OAuth flow
+      parameters:
+        - name: flow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Flow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthFlow'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/connections/{credential_id}:
+    delete:
+      tags: [oauth]
+      summary: Revoke an OAuth connection
+      parameters:
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Revoked
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/connections/{credential_id}/refresh:
+    post:
+      tags: [oauth]
+      summary: Refresh an OAuth connection
+      parameters:
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthRefresh'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/importable:
+    get:
+      tags: [oauth]
+      summary: List host logins available for import
+      responses:
+        '200':
+          description: Importable logins
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImportableLogin'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /oauth/import:
+    post:
+      tags: [oauth]
+      summary: Import an existing host login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportRequest'
+      responses:
+        '201':
+          description: Imported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mcp/catalog:
+    get:
+      tags: [mcp]
+      summary: List MCP server catalog
+      responses:
+        '200':
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPCatalogItem'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mcp/connections:
+    get:
+      tags: [mcp]
+      summary: List MCP connections
+      responses:
+        '200':
+          description: Connections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPConnection'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [mcp]
+      summary: Create an MCP connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMCPConnectionRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPConnection'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mcp/connections/{id}:
+    delete:
+      tags: [mcp]
+      summary: Delete an MCP connection
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '204':
+          description: Deleted
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mcp/connections/{id}/test:
+    post:
+      tags: [mcp]
+      summary: Test an MCP connection
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPTestResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mcp/connections/{id}/oauth/start:
+    post:
+      tags: [mcp]
+      summary: Start MCP OAuth (DCR)
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthStart'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /audit:
+    get:
+      tags: [audit]
+      summary: List audit events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEvent'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        default:
+          $ref: '#/components/responses/Error'
+
+  /events:
+    get:
+      tags: [audit]
+      summary: Server-sent events
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Internal:
+      description: Internal error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    DesktopUnavailable:
+      description: Desktop runtime is not available
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              example: state_locked
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            request_id:
+              type: string
+
+    Health:
+      type: object
+      required: [ok, version]
+      properties:
+        ok:
+          type: boolean
+        version:
+          type: string
+        uptime_ms:
+          type: integer
+          format: int64
+
+    Capabilities:
+      type: object
+      required: [runtimes, network_modes]
+      properties:
+        runtimes:
+          type: array
+          items:
+            type: string
+            enum: [native, desktop]
+        desktop_available:
+          type: boolean
+        network_modes:
+          type: array
+          items:
+            type: string
+            enum: [offline, filtered, open]
+        tunnel:
+          type: boolean
+        artifacts:
+          type: boolean
+        oauth_providers:
+          type: array
+          items:
+            type: string
+        mcp_servers:
+          type: array
+          items:
+            type: string
+
+    Harness:
+      type: object
+      required: [id, name, kind, installed, runtime]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [tui, desktop]
+        version:
+          type: string
+          nullable: true
+        installed:
+          type: boolean
+        runtime:
+          type: string
+          enum: [native, desktop]
+
+    App:
+      type: object
+      required: [id, name, kind, installed, requires_desktop]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [desktop]
+        installed:
+          type: boolean
+        requires_desktop:
+          type: boolean
+
+    Job:
+      type: object
+      required: [id, type, status, progress]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+        message:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    Workspace:
+      type: object
+      required: [id, name, root_path, default_mode, created_at, last_used_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        root_path:
+          type: string
+        default_mode:
+          type: string
+          enum: [rw, ro]
+        size_bytes:
+          type: integer
+          format: int64
+        last_sandbox_id:
+          type: string
+          nullable: true
+        locked_by:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        root_path:
+          type: string
+          description: Optional existing directory; must pass path validation.
+
+    State:
+      type: object
+      required: [id, harness_id, path, created_at, last_used_at]
+      properties:
+        id:
+          type: string
+        harness_id:
+          type: string
+        path:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        last_sandbox_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+    Mount:
+      type: object
+      required: [source, target, mode]
+      properties:
+        source:
+          type: string
+          enum: [workspace, state, cache, host]
+        target:
+          type: string
+        mode:
+          type: string
+          enum: [rw, ro]
+        host_path:
+          type: string
+          description: Required when source is host; explicit user confirmation.
+
+    CreateSandboxRequest:
+      type: object
+      required: [harness_id, workspace_id]
+      properties:
+        harness_id:
+          type: string
+        workspace_id:
+          type: string
+        state_id:
+          type: string
+        runtime:
+          type: string
+          enum: [native, desktop]
+          default: native
+        network_mode:
+          type: string
+          enum: [offline, filtered, open]
+          default: filtered
+        mounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mount'
+
+    Sandbox:
+      type: object
+      required: [id, status, harness_id, runtime, network_mode]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [creating, starting, running, stopping, stopped, failed]
+        harness_id:
+          type: string
+        runtime:
+          type: string
+          enum: [native, desktop]
+        network_mode:
+          type: string
+          enum: [offline, filtered, open]
+        workspace_id:
+          type: string
+          nullable: true
+        state_id:
+          type: string
+          nullable: true
+        pid:
+          type: integer
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    TerminalTicket:
+      type: object
+      required: [ws_url, ticket, expires_at]
+      properties:
+        ws_url:
+          type: string
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    DesktopTicket:
+      type: object
+      required: [url, ticket, expires_at]
+      properties:
+        url:
+          type: string
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    Service:
+      type: object
+      required: [id, name, protocol, status, websocket]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        protocol:
+          type: string
+          enum: [http]
+        status:
+          type: string
+          enum: [starting, ready, error]
+        websocket:
+          type: boolean
+
+    ServiceTicket:
+      type: object
+      required: [url, ticket, expires_at, service_id]
+      properties:
+        url:
+          type: string
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        service_id:
+          type: string
+
+    Stats:
+      type: object
+      required: [memory_bytes, cpu_percent, uptime_ms]
+      properties:
+        memory_bytes:
+          type: integer
+          format: int64
+        cpu_percent:
+          type: number
+        disk_bytes:
+          type: integer
+          format: int64
+        pid:
+          type: integer
+        uptime_ms:
+          type: integer
+          format: int64
+        startup_ms:
+          type: integer
+        terminal_rtt_ms_p95:
+          type: number
+          nullable: true
+
+    ScanResult:
+      type: object
+      required: [ok, hits, checks, scanned_at]
+      properties:
+        ok:
+          type: boolean
+        hits:
+          type: integer
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, hits]
+            properties:
+              name:
+                type: string
+              hits:
+                type: integer
+        scanned_at:
+          type: string
+          format: date-time
+
+    FileEntry:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [file, directory]
+        size:
+          type: integer
+          format: int64
+        mtime:
+          type: string
+          format: date-time
+          nullable: true
+
+    FileContent:
+      type: object
+      required: [content, encoding, truncated]
+      properties:
+        content:
+          type: string
+        encoding:
+          type: string
+          enum: [utf-8, base64]
+        truncated:
+          type: boolean
+        mime:
+          type: string
+          nullable: true
+
+    Diff:
+      type: object
+      required: [patch, files]
+      properties:
+        patch:
+          type: string
+        files:
+          type: array
+          items:
+            type: string
+
+    Provider:
+      type: object
+      required: [id, name, kind, auth_types]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [llm, mcp]
+        auth_types:
+          type: array
+          items:
+            type: string
+            enum: [api_key, oauth, pat, bearer, header, basic]
+        default_auth:
+          type: string
+          nullable: true
+        base_url:
+          type: string
+          nullable: true
+
+    Credential:
+      type: object
+      required: [id, provider_id, label, auth_type, fingerprint, status]
+      properties:
+        id:
+          type: string
+        provider_id:
+          type: string
+        label:
+          type: string
+        auth_type:
+          type: string
+          enum: [api_key, oauth, pat, bearer, header, basic]
+        fingerprint:
+          type: string
+        status:
+          type: string
+          enum: [connected, expired, revoked]
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateCredentialRequest:
+      type: object
+      required: [provider_id, label, auth_type]
+      properties:
+        provider_id:
+          type: string
+        label:
+          type: string
+        auth_type:
+          type: string
+          enum: [api_key, pat, bearer, header, basic]
+        value:
+          type: string
+          description: Write-only; stored in Keychain; never returned.
+        base_url:
+          type: string
+        header_name:
+          type: string
+
+    TestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        latency_ms:
+          type: integer
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    OAuthProvider:
+      type: object
+      required: [id, name, status]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [available, unavailable]
+
+    OAuthStartRequest:
+      type: object
+      required: [provider_id]
+      properties:
+        provider_id:
+          type: string
+        label:
+          type: string
+
+    OAuthStart:
+      type: object
+      required: [flow_id, auth_url, expires_at]
+      properties:
+        flow_id:
+          type: string
+        auth_url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    OAuthFlow:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, succeeded, failed, expired]
+        credential_id:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    OAuthRefresh:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ImportableLogin:
+      type: object
+      required: [provider_id, source, available]
+      properties:
+        provider_id:
+          type: string
+        source:
+          type: string
+        available:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ImportRequest:
+      type: object
+      required: [provider_id, source]
+      properties:
+        provider_id:
+          type: string
+        source:
+          type: string
+        label:
+          type: string
+
+    ImportResult:
+      type: object
+      required: [credential_id, status]
+      properties:
+        credential_id:
+          type: string
+        status:
+          type: string
+          enum: [connected, expired]
+
+    MCPCatalogItem:
+      type: object
+      required: [id, name, auth_types, requires_oauth_app]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        auth_types:
+          type: array
+          items:
+            type: string
+        requires_oauth_app:
+          type: boolean
+
+    MCPConnection:
+      type: object
+      required: [id, server_id, label, status]
+      properties:
+        id:
+          type: string
+        server_id:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+          enum: [connected, error]
+        credential_id:
+          type: string
+          nullable: true
+        tools:
+          type: array
+          items:
+            type: string
+
+    CreateMCPConnectionRequest:
+      type: object
+      required: [server_id, label]
+      properties:
+        server_id:
+          type: string
+        label:
+          type: string
+        credential_id:
+          type: string
+        auth_type:
+          type: string
+
+    MCPTestResult:
+      type: object
+      required: [ok, tools]
+      properties:
+        ok:
+          type: boolean
+        tools:
+          type: array
+          items:
+            type: string
+
+    AuditEvent:
+      type: object
+      required: [id, ts, type]
+      properties:
+        id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        type:
+          type: string
+        sandbox_id:
+          type: string
+          nullable: true
+        detail:
+          type: object
+          additionalProperties: true

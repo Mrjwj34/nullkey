@@ -148,7 +148,7 @@
 ## 8. 交付物
 
 - 代码仓库（`make dev`）。
-- README + docs/ + `slo.md` + API 契约。
+- README + docs/ + `slo.md` + API 契约 + `api/openapi.yaml`。
 - 3 分钟演示视频 + 离线备份。
 - SLO benchmark 结果。
 - 评审 PPT（问题、边界、架构、演示、路线图）。

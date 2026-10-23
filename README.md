@@ -142,7 +142,7 @@ token 不进入 sandbox
 - [05 · 调研与选型](docs/05-research.md)
 - [06 · 决策记录](docs/06-decisions.md)
 - [07 · 状态、文件挂载与持久化](docs/07-state-and-mounts.md)
-- [08 · API 契约](docs/08-api-contract.md)
+- [08 · API 契约](docs/08-api-contract.md) · [OpenAPI](api/openapi.yaml)
 - [09 · 服务隧道与产物审查](docs/09-service-tunnel.md)
 - [SLO](slo.md)
 
