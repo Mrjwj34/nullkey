@@ -17,6 +17,10 @@ import (
 const (
 	// DefaultListen is the control-plane address. It must always be loopback.
 	DefaultListen = "127.0.0.1:49152"
+	// DefaultGatewayListen is the sandbox data-plane address.
+	DefaultGatewayListen = "127.0.0.1:49153"
+	// DefaultProxyListen is the egress proxy address.
+	DefaultProxyListen = "127.0.0.1:49154"
 
 	defaultLogLevel = "info"
 	minTokenChars   = 16
@@ -25,11 +29,14 @@ const (
 // Config is the daemon configuration. Secrets are only read from the
 // environment or a 0600 token file; they are never accepted as flags.
 type Config struct {
-	Listen      string
-	Home        string
-	TokenFile   string
-	DaemonToken string
-	LogLevel    string
+	Listen        string
+	GatewayListen string
+	ProxyListen   string
+	Home          string
+	HostHome      string
+	TokenFile     string
+	DaemonToken   string
+	LogLevel      string
 }
 
 // DefaultConfig reads environment overrides. Call Validate after applying flags.
@@ -38,12 +45,16 @@ func DefaultConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve user config dir: %w", err)
 	}
+	hostHome, _ := os.UserHomeDir()
 	return Config{
-		Listen:      envOrDefault("NULLKEY_LISTEN", DefaultListen),
-		Home:        envOrDefault("NULLKEY_HOME", filepath.Join(configDir, "Nullkey")),
-		TokenFile:   os.Getenv("NULLKEY_TOKEN_FILE"),
-		DaemonToken: os.Getenv("NULLKEY_DAEMON_TOKEN"),
-		LogLevel:    strings.ToLower(envOrDefault("NULLKEY_LOG_LEVEL", defaultLogLevel)),
+		Listen:        envOrDefault("NULLKEY_LISTEN", DefaultListen),
+		GatewayListen: envOrDefault("NULLKEY_GATEWAY_LISTEN", DefaultGatewayListen),
+		ProxyListen:   envOrDefault("NULLKEY_PROXY_LISTEN", DefaultProxyListen),
+		Home:          envOrDefault("NULLKEY_HOME", filepath.Join(configDir, "Nullkey")),
+		HostHome:      hostHome,
+		TokenFile:     os.Getenv("NULLKEY_TOKEN_FILE"),
+		DaemonToken:   os.Getenv("NULLKEY_DAEMON_TOKEN"),
+		LogLevel:      strings.ToLower(envOrDefault("NULLKEY_LOG_LEVEL", defaultLogLevel)),
 	}, nil
 }
 
@@ -56,8 +67,29 @@ func envOrDefault(key, fallback string) string {
 
 // Validate normalizes paths and rejects unsafe or unsupported configuration.
 func (c *Config) Validate() error {
+	if c.Listen == "" {
+		c.Listen = DefaultListen
+	}
+	if c.GatewayListen == "" {
+		c.GatewayListen = DefaultGatewayListen
+	}
+	if c.ProxyListen == "" {
+		c.ProxyListen = DefaultProxyListen
+	}
 	if err := validateListen(c.Listen); err != nil {
 		return err
+	}
+	if err := validateListen(c.GatewayListen); err != nil {
+		return fmt.Errorf("gateway: %w", err)
+	}
+	if err := validateListen(c.ProxyListen); err != nil {
+		return fmt.Errorf("proxy: %w", err)
+	}
+	if c.Listen == c.GatewayListen || c.Listen == c.ProxyListen || c.GatewayListen == c.ProxyListen {
+		return errors.New("control, gateway, and proxy listeners must use distinct addresses")
+	}
+	if c.HostHome == "" {
+		c.HostHome, _ = os.UserHomeDir()
 	}
 	home, err := expandPath(c.Home)
 	if err != nil {

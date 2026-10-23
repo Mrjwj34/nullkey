@@ -10,7 +10,7 @@ LDFLAGS := -X github.com/Mrjwj34/nullkey/internal/version.Version=$(VERSION) \
 
 BIN := bin/nullkeyd
 
-.PHONY: all build run test test-race fmt fmt-check vet tidy lint check contract \
+.PHONY: all build run test test-race coverage fmt fmt-check vet tidy lint check contract \
         acceptance acceptance-ci acceptance-compile release-compile release-product \
         release-slo release-check clean
 
@@ -28,6 +28,9 @@ test:
 
 test-race:
 	$(GO) test -race -count=1 ./...
+
+coverage:
+	./scripts/coverage.sh coverage.out
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './.git/*')

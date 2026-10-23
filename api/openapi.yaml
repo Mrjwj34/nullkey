@@ -1322,6 +1322,11 @@ components:
         root_path:
           type: string
           description: Optional existing directory; must pass path validation.
+        default_mode:
+          type: string
+          enum: [rw, ro]
+          default: rw
+          description: Default mount mode for sandboxes; ro allows concurrent readers.
 
     State:
       type: object
@@ -1383,6 +1388,10 @@ components:
           description: services_only disables general egress, not gateway traffic. All modes allow remote model/MCP/git calls; none guarantees data stays local.
         mounts:
           type: array
+          description: |
+            workspace/state/cache are implicit in the native runtime; declaring
+            them is accepted. Host mounts are rejected in v1 (400) because the
+            native runtime has no mount namespace; use a dedicated workspace.
           items:
             $ref: '#/components/schemas/Mount'
 
@@ -1813,6 +1822,11 @@ components:
           type: string
         auth_type:
           type: string
+        tools:
+          type: array
+          items:
+            type: string
+          description: Optional tool allowlist. Empty means the server's default policy; a non-empty list rejects unlisted tools.
 
     MCPTestResult:
       type: object

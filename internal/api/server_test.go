@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,17 +10,45 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mrjwj34/nullkey/internal/artifacts"
+	"github.com/Mrjwj34/nullkey/internal/core"
+	"github.com/Mrjwj34/nullkey/internal/secret"
+	"github.com/Mrjwj34/nullkey/internal/store/sqlite"
+	"github.com/Mrjwj34/nullkey/internal/terminal"
 )
 
 const testToken = "test-token-0123456789abcdef"
 
-func newTestHandler() http.Handler {
+func newTestHandler(t *testing.T) http.Handler {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	home := t.TempDir()
+	store, err := sqlite.Open(context.Background(), home)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	svc, err := core.New(core.Options{
+		Home:        home,
+		Store:       store,
+		Secrets:     secret.NewMemory(),
+		Terminal:    terminal.NewHub(logger),
+		Artifacts:   artifacts.New(),
+		Logger:      logger,
+		GatewayAddr: "127.0.0.1:49153",
+		ProxyAddr:   "127.0.0.1:49154",
+		ControlAddr: "127.0.0.1:49152",
+	})
+	if err != nil {
+		t.Fatalf("core: %v", err)
+	}
 	return NewServer(Config{
 		Token:        testToken,
 		Version:      "0.1.0-test",
 		StartedAt:    time.Now().Add(-time.Second),
 		Capabilities: DefaultCapabilities(),
+		Service:      svc,
 	}, logger).Handler()
 }
 
@@ -55,7 +84,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) errorEnvelope {
 }
 
 func TestHealthPublic(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/health", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -76,7 +105,7 @@ func TestHealthPublic(t *testing.T) {
 }
 
 func TestAuthRequired(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/capabilities", "", nil)
 	if rec.Code != http.StatusUnauthorized {
@@ -107,7 +136,7 @@ func TestAuthRequired(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/capabilities", "", authHeader())
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -134,7 +163,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestUnknownRoute(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/does-not-exist", "", authHeader())
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
@@ -148,28 +177,33 @@ func TestUnknownRoute(t *testing.T) {
 	}
 }
 
-func TestStubRoute(t *testing.T) {
-	h := newTestHandler()
+func TestSandboxListImplemented(t *testing.T) {
+	h := newTestHandler(t)
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/sandboxes", "", authHeader())
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec)
-	if env.Error.Code != CodeNotImplemented {
-		t.Fatalf("code = %q, want %q", env.Error.Code, CodeNotImplemented)
+	var body struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if body.Items == nil {
+		t.Fatal("items must be an array, not null")
 	}
 }
 
 func TestOAuthCallbackIsPublic(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	rec := doRequest(t, h, http.MethodGet, "/api/v1/oauth/callback?code=x&state=y", "", nil)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501 (public but unimplemented)", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for an invalid state (must be public)", rec.Code)
 	}
 }
 
 func TestCORS(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	allowed := "http://127.0.0.1:5173"
 
 	rec := doRequest(t, h, http.MethodOptions, "/api/v1/capabilities", "", map[string]string{"Origin": allowed})
@@ -229,8 +263,8 @@ func TestRouteSpecs(t *testing.T) {
 	if !seen["GET /api/v1/health"] || !seen["GET /api/v1/capabilities"] {
 		t.Fatal("system routes missing")
 	}
-	if implemented != 2 {
-		t.Fatalf("implemented routes = %d, want 2 at P0", implemented)
+	if implemented != len(specs) {
+		t.Fatalf("implemented routes = %d, want all %d", implemented, len(specs))
 	}
 }
 
