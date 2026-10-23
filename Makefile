@@ -11,7 +11,8 @@ LDFLAGS := -X github.com/Mrjwj34/nullkey/internal/version.Version=$(VERSION) \
 BIN := bin/nullkeyd
 
 .PHONY: all build run test test-race fmt fmt-check vet tidy lint check contract \
-        acceptance acceptance-ci acceptance-compile clean
+        acceptance acceptance-ci acceptance-compile release-compile release-product \
+        release-slo release-check clean
 
 all: check
 
@@ -55,6 +56,17 @@ acceptance-ci:
 
 acceptance-compile:
 	$(GO) test -tags acceptance -run '^$$' ./test/acceptance
+
+release-compile:
+	$(GO) test -tags 'acceptance release' -run '^$$' ./test/acceptance
+
+release-product:
+	$(GO) test -tags 'acceptance release' -count=1 -run '^TestProduct_' -v ./test/acceptance
+
+release-slo:
+	NULLKEY_RELEASE_STRICT=1 ./scripts/slo.sh
+
+release-check: release-product release-slo
 
 clean:
 	rm -rf bin coverage.out

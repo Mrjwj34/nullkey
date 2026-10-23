@@ -1,0 +1,71 @@
+name: release
+
+"on":
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Product capabilities are checked only for releases (and manual dry runs),
+  # never on pull requests.
+  product:
+    name: product capabilities
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: product capability assertions
+        run: go test -tags 'acceptance release' -count=1 -run '^TestProduct_' -v ./test/acceptance
+
+      - name: OpenAPI route contract
+        run: go test -count=1 -v ./internal/contract
+
+  # SLO is a release gate. Until the native runtime, PTY, gateway, and tunnel
+  # exist, unimplemented SLO gates fail instead of reporting fabricated values.
+  slo:
+    name: SLO gate
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      NULLKEY_RELEASE_STRICT: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: run SLO assertions
+        run: |
+          set -o pipefail
+          ./scripts/slo.sh 2>&1 | tee slo-results.txt
+
+      - name: upload SLO results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slo-results
+          path: slo-results.txt
+          if-no-files-found: warn

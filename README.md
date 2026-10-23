@@ -174,7 +174,13 @@ make build      # bin/nullkeyd
 make run        # 启动 control-plane（loopback only）
 make acceptance-ci  # 黑盒验收：已实现断言执行，未实现项 skip
 make acceptance     # 严格验收（里程碑 gate）
+make release-product  # release-only：产品能力断言
+make release-slo      # release-only：SLO gate（P9 前预期失败）
+make release-check    # 产品能力 + SLO
 ```
+
+普通 PR CI 只跑 static/build/unit/acceptance/contract；`.github/workflows/release.yml`
+在 GitHub Release 发布时额外运行产品能力断言与 SLO gate，不作为 PR 检查项。
 
 - Kernel 计划：[docs/11-kernel-implementation-plan.md](docs/11-kernel-implementation-plan.md)
 - 验收断言：[docs/12-acceptance.md](docs/12-acceptance.md)

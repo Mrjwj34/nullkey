@@ -78,7 +78,14 @@ make contract             # OpenAPI ↔ 路由契约
 make acceptance-ci        # 非严格验收（未实现项 skip）
 make acceptance           # 严格验收（未实现项失败，里程碑 gate）
 make acceptance-compile   # 只编译验收代码
+make release-compile      # 编译 release 套件（-tags acceptance release）
+make release-product      # release-only：产品能力断言
+make release-slo          # release-only：SLO gate（P9 前预期失败）
 ```
+
+普通 PR CI 并行跑 static/build/unit/acceptance/contract，不跑 product/SLO。
+发布 GitHub Release 时 `.github/workflows/release.yml` 才运行 product 与 SLO gate；
+不要把 release-only 断言塞回 PR CI。
 
 本地启动：
 
@@ -129,8 +136,10 @@ NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
 2. 在 `test/acceptance` 写/启用对应 `TestAC_*`；未实现时用 `pending(t, id, reason)`。
 3. 先跑 `make acceptance` 看失败；再实现。
 4. 实现后移除 `pending`，跑 `make acceptance`（严格）通过。
-5. 更新 `docs/12` 状态列；如行为变化，先更新契约与 `docs/10`。
-6. 安全类 AC（`AC-SEC-*`）不允许豁免。
+5. 产品能力用 `TestProduct_*`，SLO 用 `TestSLO_*`，放在 `//go:build acceptance && release`；
+   普通 PR CI 不执行它们。
+6. 更新 `docs/12` 状态列；如行为变化，先更新契约与 `docs/10`。
+7. 安全类 AC（`AC-SEC-*`）不允许豁免。
 
 验收测试是黑盒：真实启动 `nullkeyd`，不 import 业务实现（domain/ports 除外）。
 

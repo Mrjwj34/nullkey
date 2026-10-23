@@ -376,7 +376,8 @@ creating -> starting -> running -> stopping -> stopped
 | 契约 | `internal/contract` | CI | OpenAPI path+method ↔ 路由表；security scheme；base path |
 | 验收（黑盒） | `test/acceptance` | `-tags acceptance` | 启动真实 `nullkeyd`，走 HTTP/WS；按 AC ID 组织 |
 | 集成 | `test/integration` | `darwin` tag | Seatbelt、Keychain、PTY、真实 harness smoke |
-| SLO | `test/bench` + `scripts/slo.sh` | 手动/发布 | 30 次 p50/p95；RSS/CPU/延迟 |
+| SLO | `test/bench` + `scripts/slo.sh` | release / 手动 | 30 次 p50/p95；RSS/CPU/延迟 |
+| Release | `test/acceptance`（`acceptance && release`） | `release: published` / 手动 | 产品能力断言 + SLO gate；不在 PR 运行 |
 
 ### 11.2 验收运行方式
 
@@ -384,7 +385,15 @@ creating -> starting -> running -> stopping -> stopped
 make check                 # fmt/vet/unit/contract/build/acceptance-compile
 make acceptance-ci         # 非严格：已实现断言执行，未实现项 skip
 make acceptance            # 严格：未实现项直接失败（里程碑 gate）
+make release-product       # release-only：产品能力断言
+make release-slo           # release-only：SLO gate（P9 前预期失败）
 ```
+
+- **普通 PR CI**：并行跑 static、build（linux/darwin）、unit（linux/macOS）、
+  acceptance（linux/macOS）、OpenAPI contract；不跑 product/SLO。
+- **Release CI**：`.github/workflows/release.yml` 在 GitHub Release `published` 时
+  运行产品能力断言与 SLO gate，并上传 SLO 输出；SLO 在 P9 前会因未实现项失败，
+  这是发布 gate 的正确信号，不要用 skip 伪装通过。
 
 - 严格模式 = `NULLKEY_ACCEPTANCE_STRICT=1`。
 - 断言 ID 稳定；实现一个功能就把对应 `pending` 改为真实断言，并更新
@@ -421,6 +430,7 @@ make acceptance            # 严格：未实现项直接失败（里程碑 gate�
 - P1/P2 可与 P3/P4 并行，但共享 `domain`/`ports` 接口要先冻结。
 - P5/P6 依赖 P3 的 Keychain；P7 依赖 P2 的进程环境。
 - P8 依赖 P1/P2；GUI 可在 P1 后开始接控制面。
+- Release workflow 在所有 P9 项完成后才应转绿；发布前必须检查 SLO artifact。
 
 ## 13. 风险与预案
 

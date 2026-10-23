@@ -13,10 +13,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  lint:
-    name: lint / build
+  # Fast static checks run together; they do not need a macOS runner.
+  static:
+    name: static checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,21 +48,47 @@ jobs:
       - name: go mod tidy (must be clean)
         run: go mod tidy -diff
 
-      - name: build linux
-        run: go build -trimpath ./cmd/...
-
-      - name: build darwin/arm64
-        env:
-          GOOS: darwin
-          GOARCH: arm64
-        run: go build -trimpath ./cmd/...
-
       - name: compile acceptance suite
         run: go test -tags acceptance -run '^$' ./test/acceptance
 
-  test:
-    name: test (${{ matrix.os }})
+      - name: compile release suite
+        run: go test -tags 'acceptance release' -run '^$' ./test/acceptance
+
+  # Cross-build targets in parallel. Native tests run in the unit/acceptance
+  # matrices below.
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o "/tmp/nullkeyd-${GOOS}-${GOARCH}" ./cmd/nullkeyd
+
+  unit:
+    name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -71,8 +103,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: unit tests (race)
+      - name: go test -race
         run: go test -race -count=1 ./...
+
+  acceptance:
+    name: acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: black-box acceptance (implemented assertions)
         run: go test -tags acceptance -count=1 -timeout 15m ./test/acceptance
@@ -80,6 +130,7 @@ jobs:
   contract:
     name: OpenAPI contract
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4

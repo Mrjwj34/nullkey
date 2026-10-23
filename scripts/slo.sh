@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# SLO benchmark placeholder (P9). It intentionally exits non-zero instead of
-# reporting fabricated numbers. See docs/11-kernel-implementation-plan.md §11-12
-# and docs/12-acceptance.md (AC-SLO-*).
+# Release SLO gate. Runs the SLO assertions in test/acceptance.
+#
+# The full S1-S19 set needs the native runtime, PTY, gateway, and tunnel. Until
+# those land, NULLKEY_RELEASE_STRICT=1 (default) fails unimplemented gates
+# instead of reporting fabricated numbers. Set NULLKEY_RELEASE_STRICT=0 for a
+# local partial run.
 set -euo pipefail
 
-cat >&2 <<'MSG'
-nullkey SLO benchmark is not implemented yet (P9).
+: "${NULLKEY_RELEASE_STRICT:=1}"
+export NULLKEY_RELEASE_STRICT
 
-Expected measurements:
-  S1/S2  POST /sandboxes -> terminal ticket -> WS ready -> input enabled
-  S3/S4  daemon RSS / per-sandbox RSS
-  S8/S9  terminal RTT / gateway overhead against a controlled upstream stub
-  S16-19 tunnel RTT/throughput, artifact listing, concurrency
-
-Run `make acceptance` for functional assertions; SLO results must be recorded
-with the macOS version, chip, harness version, sample count, and failures.
-MSG
-exit 2
+exec go test \
+  -tags 'acceptance release' \
+  -count=1 \
+  -run '^TestSLO_' \
+  -v \
+  -timeout 30m \
+  ./test/acceptance

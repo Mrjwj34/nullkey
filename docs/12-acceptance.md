@@ -38,13 +38,24 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 - 断言只能新增或标记 `superseded`，不能为了变绿删除。
 - `v1.1` 断言不进入 v1 严格模式，也不阻塞 v1 gate。
 
-### 1.2 状态
+### 1.2 PR CI 与 release CI
+
+- **普通 PR CI**：只跑 static/build/unit/acceptance（非严格）/OpenAPI contract；
+  不跑产品能力与 SLO。
+- **Release CI**：`.github/workflows/release.yml` 在 GitHub Release `published`
+  时运行 `TestProduct_*` 与 `TestSLO_*`，并上传 SLO 输出。
+- Release 套件在 `test/acceptance/release_product_test.go`、
+  `release_slo_test.go`，使用 `//go:build acceptance && release`。
+- SLO 未实现项在 `NULLKEY_RELEASE_STRICT=1` 下失败；这是发布 gate，不能用 skip
+  伪装通过。
+
+### 1.3 状态
 
 | 状态 | 含义 |
 |---|---|
 | ✅ | 骨架/已实现，CI 默认执行 |
 | ⏳ | 已写断言，功能未实现；严格模式失败 |
-| 📊 | benchmark/脚本，不属于 `go test` 默认路径 |
+| 📊 | benchmark/脚本，release CI 或手动运行 |
 | 🔍 | 人工/演示检查 |
 | 🔜 | v1.1，明确不在 v1 范围 |
 
@@ -63,6 +74,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-API-009 | P1/P9 | `GET /events` 返回 `text/event-stream`；sandbox/job/oauth/network/service 事件按契约 `type` 推送；慢客户端不阻塞。 | `TestAC_API_009_SSEEvents` | ⏳ |
 | AC-API-010 | P1 | `POST /jobs/{job_id}/cancel` 仅取消可取消的安装 job；状态 `cancelling → cancelled`；重复取消返回当前状态；已成功/失败/不可取消返回 409；取消后无半安装版本。 | `TestAC_API_010_JobCancel` | ⏳ |
 | AC-API-011 | P5 | `POST /oauth/flows/{flow_id}/cancel` 使 pending flow 进入 `cancelled` 并失效 state/PKCE；迟到 callback 不写凭证；已成功返回 409。 | `TestAC_API_011_OAuthCancel` | ⏳ |
+| AC-PROD-001 | Release | Release 时黑盒验证 health/capabilities（`native`、`services_only/filtered/open`）、auth 错误 envelope、loopback CORS；响应不含 daemon token 或凭证前缀。 | `TestProduct_*` | ✅（P0 子集） |
 
 ## 3. 零凭证与 token
 
@@ -156,6 +168,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-SLO-003 | P9 | 隧道 RTT p95 < 20ms、吞吐 > 50MB/s；10k 文件列表 p95 < 300ms；文件预览首字节 p95 < 100ms。 | `TestAC_SLO_003_TunnelAndArtifacts` | 📊 |
 | AC-SLO-004 | P9 | 3 个并发 sandbox 冷启动 p95 < 3s；3 个 Codex sandbox 总内存 < 1.5GB。 | `TestAC_SLO_004_Concurrency` | 📊 |
 | AC-SLO-005 | P9 | 另报同一启动起点到 harness TUI 可交互的 p50/p95；adapter 无法识别时标“未测”，不能用 S1 代替。 | `scripts/slo.sh` 报告 | 📊 |
+| AC-SLO-006 | Release | daemon 空闲 RSS < 80MB；control-plane health p95 < 50ms（release smoke，不替代 S9）。 | `TestSLO_DaemonIdleRSS`、`TestSLO_HealthLatency` | 📊 |
 
 ## 11. 交互契约（kernel 可观察部分）
 
@@ -181,6 +194,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | **G1 零凭证沙箱** | + AC-SEC-001..005、AC-RT-001..004/007/008/009、AC-STATE-001..004 | gateway/MCP/OAuth |
 | **G2 模型 + MCP + 取消** | + AC-NET-001/002/007/008、AC-CRED-001/002/005、AC-MCP-001..003、AC-API-010/011 | egress 细粒度、tunnel |
 | **G3 演示** | + AC-NET-003/004、AC-SEC-006/010、AC-AUD-001、AC-API-009、AC-SLO-001/002；交付时加 AC-SVC-001..003、AC-TUN-001..003、AC-ART-001/002 | desktop/v1.1 可砍 |
+| **Release** | AC-PROD-001、AC-SLO-001..006（`make release-check` / release workflow） | 不适用；未达标不发布 |
 
 ## 13. v1.1（不阻塞 v1）
 
