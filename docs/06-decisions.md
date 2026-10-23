@@ -1,150 +1,174 @@
-# 06 · 决策记录与开放问题
+# 06 · 决策记录
 
-> 格式：Context / Decision / Consequences。状态：Accepted / Open。
+> 已确认的架构决策；后续变更用新 ADR 覆盖。
 
 ## ADR-001 · 产品名与仓库
 
-**Context**：需要一个公开、可记忆、能表达"密钥不在沙箱"的名字。  
-**Decision**：产品名 **Nullkey**；仓库 `nullkey`；docs-first，代码随后。  
-**Consequences**：名字短、可扩展；"Null" 可能被理解为"空指针"，需要在 README 里用一句话解释。
+**Decision**：产品名 **Nullkey**；仓库 `nullkey`；docs-first。
+**Consequences**：名字短、可扩展；README 用一句话解释"no key in the sandbox"。
 
 ## ADR-002 · 威胁模型只覆盖 session 泄漏
 
-**Context**：三天内同时做"防注入"和"防泄漏"通常两个都做不好；题目核心是"沙箱内不出现敏感信息"。  
-**Decision**：范围内只覆盖 session 泄漏；prompt injection、恶意 Agent、上游劫持、沙箱逃逸、供应链明确排除。  
+**Decision**：范围内只覆盖 session 泄漏；prompt injection、恶意 Agent、上游劫持、沙箱逃逸、供应链明确排除。
 **Consequences**：
 
-- 设计更简单：不需要 HITL、目的地 allowlist 作为安全控制。
-- 可以更专注地做"零密钥 + 隔离 + 可验证"。
+- 不需要 HITL、目的地 allowlist 作为安全控制。
+- 重点做"零凭证 + 隔离 + 可验证"。
 - 文档与演示必须主动说明边界。
 
 ## ADR-003 · 透明网关优先于模型占位符
 
-**Context**：原始思路是让模型用特殊格式占位符，工具调用时替换；这需要模型配合、schema 兼容、工具适配。  
-**Decision**：v1 用 **base URL + per-sandbox token** 的透明网关；模型不需要知道任何占位符语法。  
+**Decision**：v1 用 base URL + per-sandbox token 的透明网关；模型不需要理解占位符语法。
 **Consequences**：
 
-- 主流 harness（Claude Code / Codex / DSH）都能接。
-- MCP 配置只指向 gateway，不需要模型理解。
+- 主流 harness 都能接。
+- MCP 配置只指向 gateway。
 - `cred://` 工具级能力引用留到 v1.1，用于 CLI/自定义工具。
 
-## ADR-004 · v1 沙箱用 Colima + Docker
+## ADR-004 · 默认 native runtime，不用 VM
 
-**Context**：microsandbox 更"未来"，但 beta；Colima 已安装、MIT、Apple Silicon 成熟。  
-**Decision**：v1 用 Colima（Lima VM）+ Docker + 自建 Ubuntu ARM 桌面镜像；`SandboxProvider` 抽象。  
+**Context**：Colima/Docker 需要 Linux VM，启动/内存重；Codex/Claude Code/DSH 都有 macOS 原生版本；默认 TUI 不需要桌面。
+**Decision**：v1 默认 **macOS Seatbelt 进程沙箱**；VM/容器只作为可选 desktop 后端。
 **Consequences**：
 
-- 交付风险低；容器共享 VM 内核，不宣称认证级强隔离。
-- v0.2 可替换为 microsandbox / Apple `container`。
-- 需要自己维护桌面镜像。
+- 启动/内存接近原生；满足 SLO。
+- 隔离弱于 VM；不宣称防 determined escape。
+- 需要仔细维护 Seatbelt profile。
+- 如果评审要求认证级强隔离，需要另立 VM 后端。
 
 ## ADR-005 · 有凭证的 MCP 必须在宿主侧
 
-**Context**：MCP server 需要 token 才能工作；如果跑在沙箱，token 就在沙箱的 env/配置/内存里。  
-**Decision**：有凭证的 MCP 在宿主侧运行；沙箱只拿 gateway URL + per-sandbox token。无凭证的 MCP（Filesystem）可以沙箱侧。  
+**Decision**：有凭证的 MCP 在宿主侧运行；沙箱只拿 gateway URL + per-sandbox token。无凭证 MCP（Filesystem）可以沙箱侧。
 **Consequences**：
 
 - 沙箱配置零敏感信息。
-- 宿主侧 MCP server 是"被信任到可以使用凭证"的组件；恶意 server 不在范围。
+- 宿主 MCP server 是被信任到可以使用凭证的组件；恶意 server 不在范围。
 - 需要 stdio bridge 兼容只支持 stdio 的 harness。
 
-## ADR-006 · 全局 key + per-sandbox token
+## ADR-006 · 全局凭证 + per-sandbox token
 
-**Context**：题目要求"初版给所有沙箱共用"，同时要控制泄漏影响。  
-**Decision**：v1 全局 key；每个沙箱独立 token、独立审计、可单独撤销；停止即失效。  
+**Decision**：v1 全局凭证；每个沙箱独立 token、独立审计、可单独撤销；停止即失效。
 **Consequences**：
 
 - UX 简单，符合"不要太技术化"。
-- 一个沙箱 token 泄漏只影响该沙箱生命周期；不是长期 key 泄漏。
-- v1.1 再做按 harness/MCP 的 scope。
+- 一个 sandbox token 泄漏只影响该沙箱生命周期。
+- 不做按 harness/MCP 的凭证 scope（v1）。
 
-## ADR-007 · v1 不做完整 OAuth，做广谱静态凭证 + 宿主登录导入
+## ADR-007 · OAuth 是一等公民
 
-**Context**：Claude Pro / ChatGPT Plus 用户多，但 OAuth token 会落在沙箱，违反 zero-secret；完整宿主侧 OAuth 需要 PKCE、回调、刷新、多账号，且 Claude Code 闭源、provider 条款存在不确定性。  
+**Context**：很多服务不支持 API key；Codex 开源、OAuth 可做；MCP 规范有 OAuth 2.1 + DCR。
 **Decision**：
 
-- v1 支持广谱 API key/token（8–10 个模型 provider + 通用 auth 类型）。
-- v1 **不实现完整 OAuth 授权流程**。
-- v1 提供实验性"导入宿主已有登录"：Codex 读 `~/.codex/auth.json`；Claude Code 用 `setup-token` 或 Keychain 导入。
-- v1.1 做完整宿主侧 OAuth broker + MCP OAuth（DCR）。
+- v1 实现宿主侧 **OAuth Broker**（PKCE、localhost callback、refresh、Keychain）。
+- **Codex OAuth 为 Must**；GitHub OAuth 为 Must；MCP OAuth（DCR）为 Should；Claude Code 导入为 Should。
+- Slack/Notion/Google 等预注册 app 放 v1.1。
+- 沙箱内不发起登录。
 
 **Consequences**：
 
-- 订阅用户可以"导入"已有登录，但不保证自动刷新/所有版本。
-- 必须在 README 和产品页明确"实验性"与 API key 的差异。
-- v1.1 需要处理浏览器回调、刷新、多账号、provider 限制与条款。
+- 覆盖订阅/无 API key 的服务。
+- 需要处理 provider 条款、scope、刷新失败。
+- 不是"所有 provider 一次到位"；逐个接入。
 
-## ADR-008 · 本地 Web GUI 优先
+## ADR-008 · GUI 不在本设计范围
 
-**Context**：三天内做原生 `.app` 的签名/打包/WebView 兼容会吃掉安全链路时间。  
-**Decision**：v1 由 daemon 提供本地 Web GUI（127.0.0.1）；Tauri 外壳放 v1.1。  
+**Decision**：GUI/app 选型由独立团队负责；本仓库只冻结 API 契约、事件、终端协议。
 **Consequences**：
 
-- 交付快、跨平台、易调试。
-- "桌面级"体验稍弱；可以在 v1.1 用 Tauri 包一层。
-- 必须确保 API 只绑 127.0.0.1，避免 LAN 暴露。
+- 后端与 GUI 可并行。
+- 任何 GUI 技术栈都可以接。
+- API 破坏性变更需要版本号/迁移说明。
 
-## ADR-009 · 沙箱默认 filtered，而不是断网
+## ADR-009 · 网络默认 filtered
 
-**Context**：断网最安全，但会让包安装、公开文档、公开 git、浏览器都不可用，产品局限太大；而 key 隔离并不依赖断网。  
-**Decision**：三档网络：`offline` / `filtered`（默认）/ `open`。互联网只经 egress proxy；代理只做 CONNECT + 域名 allowlist，不做 TLS MITM；认证流量走 gateway。  
+**Decision**：三档网络 `offline` / `filtered`（默认）/ `open`；未认证流量经 egress proxy，认证流量经 gateway。
 **Consequences**：
 
-- 日常开发可用；敏感仓库可切 `offline`。
-- `open` 有数据外发风险，需明确警告；prompt injection/恶意 Agent 不在威胁模型内。
-- 需要维护默认 allowlist 和代理日志。
-- 不识别 proxy 的程序会失败（fail closed），v1.1 可用 iptables REDIRECT 兼容。
+- 包安装、公开文档、公开 git 可用。
+- 代理不做 TLS MITM；认证不做通用 header 注入。
+- `open` 有数据外发风险，需要警告。
+- 不识别 proxy 的程序失败（fail closed）。
 
 ## ADR-010 · Harness 宿主侧下载、只读挂载
 
-**Context**：沙箱内下载会引入网络、供应链、重复下载；题目要求 harness 不随二进制打包。  
-**Decision**：宿主下载固定版本、校验 SHA-256、缓存；只读挂载进沙箱。  
+**Decision**：宿主下载固定版本、校验 SHA-256、缓存；沙箱只读使用。
 **Consequences**：
 
 - 启动快、可复现、可审计。
-- 需要维护 harness 版本清单和适配器。
+- 需要维护版本清单和适配器。
 - 不自动升级；用户确认后切换。
 
 ## ADR-011 · Provider registry + 通用 auth 适配器
 
-**Context**：用户希望"密钥支持尽可能全面"，但逐个写 provider 适配器不可持续。  
-**Decision**：用 provider registry 描述 `base_url / auth_type / header_name / models`；网关只实现少量 auth 适配器（bearer、header、basic、query、custom）；OpenAI-compatible 覆盖大多数模型 provider。  
+**Decision**：用 registry 描述 `base_url / auth_type / header_name / models`；网关实现少量 auth 适配器（bearer、header、basic、query、custom、OAuth）。
 **Consequences**：
 
-- 新增 provider 主要是配置，不是代码。
-- SigV4（Bedrock）、Service Account（Vertex）需要额外签名适配器，放 v1.1。
-- 自定义 endpoint 让用户覆盖长尾 provider。
+- 新增 provider 主要是配置。
+- SigV4/Vertex 等需要额外签名适配器，放 v1.1。
+- 自定义 endpoint 覆盖长尾 provider。
 
-## ADR-012 · 登录只发生在宿主，沙箱内不登录
+## ADR-012 · 登录只发生在宿主
 
-**Context**：任何在沙箱内完成的登录都会把 OAuth token 写进沙箱文件/Keychain，直接违反 zero-secret。  
-**Decision**：harness/MCP 的登录、导入、刷新都在宿主完成；沙箱只拿 per-sandbox token。  
+**Decision**：harness/MCP 的登录、OAuth、刷新都在宿主完成；沙箱只拿 per-sandbox token。
 **Consequences**：
 
 - 沙箱内不出现登录页、不出现 OAuth token。
-- 需要处理"宿主已登录/未登录"的状态显示与重新导入。
-- 对不支持 API key 的 harness，v1 只能依赖导入或暂不支持。
+- 需要处理"宿主已登录/未登录"的状态与重新授权。
+- 对不支持 API key 的 harness，v1 依赖 OAuth/导入。
 
-## ADR-013 · 网络与密钥隔离正交
+## ADR-013 · 网络与凭证隔离正交
 
-**Context**：容易把"沙箱安全"等同于"断网"，但真正防 key 泄漏的是"key 不在沙箱 + 认证走网关"。  
-**Decision**：允许互联网，但强制经 egress proxy；认证流量（模型/MCP/git）走 gateway；沙箱无默认路由，不能直连。  
+**Decision**：允许互联网（经 proxy），认证流量走 gateway；沙箱无默认外网路由。
 **Consequences**：
 
-- 产品可用性显著提升；安全论证仍然成立。
-- 需要区分"未认证流量"与"认证流量"，后者不能用通用代理。
-- 数据外泄是另一个问题，不在本威胁模型内。
+- 产品可用性提升；安全论证仍成立。
+- 需要区分未认证/认证流量。
+- 数据外泄是另一个问题，不在威胁模型内。
 
-## 开放问题
+## ADR-014 · 状态默认持久化 + 可共享
 
-| # | 问题 | 影响 | 建议 |
-|---|---|---|---|
-| 1 | OAuth 是否必须进 v1？ | 高 | v1 做广谱 key + 可选导入；若评审明确要求完整流程，砍 Codex/DSH 换单 provider OAuth |
-| 2 | GUI 是否必须原生 `.app`？ | 中 | v1 本地 Web；Tauri 放 v1.1 |
-| 3 | 停止后 workspace 保留多久？ | 中 | 默认保留 workspace、删除 home；GUI 可选"全删" |
-| 4 | 是否承诺 Windows/Linux 时间表？ | 中 | 只承诺 `SandboxProvider` 接口；不承诺日期 |
-| 5 | MCP catalog 做多宽？ | 中 | v1 GitHub + Filesystem；Slack/Notion 作为 Should |
-| 6 | 是否做 microVM？ | 中 | v1 不做；v0.2 评估 microsandbox / Apple container |
-| 7 | 许可证？ | 低 | 当前未加 LICENSE；建议 Apache-2.0（与依赖兼容） |
-| 8 | 是否支持多沙箱并行？ | 中 | v1 允许，但资源限制；默认串行更稳 |
-| 9 | 默认 allowlist 放多宽？ | 中 | 先覆盖 npm/PyPI/GitHub/常见文档；可切 `open` |
+**Decision**：workspace / state / cache 默认持久化；workspace 支持 rw 独占 / ro 共享；cache 全局共享。
+**Consequences**：
+
+- 继续进度、复用登录/缓存。
+- 需要锁、重置、清理、路径校验。
+- 共享 state 时 token 必须在启动时轮换，避免旧 token 残留。
+- 详见 [07-state-and-mounts.md](07-state-and-mounts.md)。
+
+## ADR-015 · 默认 TUI（harness 的 TUI）
+
+**Decision**：GUI 默认是 SSH-client 风格的 Terminal 页，里面跑 harness 自己的 TUI；虚拟桌面是独立可选视图。
+**Consequences**：
+
+- 编码 Agent 的交互模式不变。
+- 默认不需要 Xvfb/noVNC。
+- 桌面 app/虚拟桌面需要可选 desktop runtime，单独计量。
+
+## ADR-016 · 宿主 → 沙箱 ingress 服务隧道
+
+**Context**：DSH 等 harness 只有 WebUI；虚拟桌面太重；Agent 产物需要一个可审查的入口。  
+**Decision**：Tunnel Proxy 只绑 `127.0.0.1`，只转发 adapter 声明过的 service；一次性 ticket；支持 HTTP/WebSocket/SSE；不做任意端口转发。  
+**Consequences**：
+
+- WebUI-only harness 可用；TUI 默认路径不变。
+- 需要处理 Origin/CSRF、cookie 作用域、ticket 过期、审计。
+- 不提供公网分享/VPN/端口扫描。
+
+## ADR-017 · Artifacts 只读审查
+
+**Decision**：workspace 文件树、文本/图片预览、git diff 通过只读 API 暴露；路径 canonicalize 到 workspace；不在审查 API 里写文件。  
+**Consequences**：
+
+- GUI 可审查 Agent 产物；写操作仍走 harness。
+- 二进制/大文件只给元数据/下载。
+- 内容不进入模型 prompt。
+
+## 已确认的产品决策
+
+| # | 问题 | 决策 |
+|---|---|---|
+| 1 | OAuth | 重要；v1 做 OAuth Broker，Codex OAuth Must；API key fallback |
+| 2 | GUI/app 选型 | 不在本设计范围；API 契约为边界 |
+| 3 | 状态 | 尽可能持久化且共用 |
+| 4 | Windows/Linux | 不做；跑 macOS MVP |
+| 5 | 凭证 scope | v1 全局；不做按 harness/MCP 的 scope |
