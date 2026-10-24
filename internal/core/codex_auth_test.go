@@ -233,7 +233,7 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	svc.GatewayTLSURL = "https://127.0.0.1:49153"
 	svc.GatewayCAPath = caPath
 	state := t.TempDir()
-	env, err := svc.writeGeneratedConfig(state, "sbx_test", domain.NetworkFiltered, "codex")
+	env, err := svc.writeGeneratedConfig(state, "sbx_test", domain.NetworkFiltered, "codex", "/private/tmp/nk-ws")
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -251,6 +251,11 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 		`requires_openai_auth = false`,
 		`daemon_auto_start = false`,
 		`plugins = false`,
+		// Codex cannot nest its own Seatbelt sandbox inside the sandbox profile;
+		// without these it stops on folder trust and per-command approval.
+		`approval_policy = "never"`,
+		`sandbox_mode = "danger-full-access"`,
+		"[projects.\"/private/tmp/nk-ws\"]\ntrust_level = \"trusted\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("config missing %q:\n%s", want, text)
@@ -276,7 +281,7 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	}
 	// A non-codex harness gets the CA but no Codex config.
 	other := t.TempDir()
-	if _, err := svc.writeGeneratedConfig(other, "sbx_other", domain.NetworkFiltered, "shell"); err != nil {
+	if _, err := svc.writeGeneratedConfig(other, "sbx_other", domain.NetworkFiltered, "shell", ""); err != nil {
 		t.Fatalf("shell config: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(other, "home", ".codex", "config.toml")); !os.IsNotExist(err) {

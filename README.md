@@ -205,6 +205,24 @@ macOS 会把 Keychain 条目的 ACL 视为不同的调用方，可能弹出一�
 拒绝后 daemon 会对该凭证做 60 秒负缓存并失败关闭，不会让每个并发请求重复弹窗。
 生产签名构建使用 Keychain；验收测试始终使用 file fallback。
 
+### GUI（apps/nullkey-gui）
+
+macOS 端 Flutter + Forui 工程在 [`apps/nullkey-gui`](apps/nullkey-gui)，通过 `api/openapi.yaml`
+对接 daemon：给了 `NULLKEY_DAEMON_URL` 与 `NULLKEY_DAEMON_TOKEN` 就连真实 daemon，
+不给就跑内置的 Core Mock（带延迟，便于看启动/安装/登录的中间态）。
+
+```bash
+cd apps/nullkey-gui
+flutter pub get
+flutter analyze && flutter test
+flutter run -d macos \
+  --dart-define=NULLKEY_DAEMON_URL=http://127.0.0.1:49152 \
+  --dart-define=NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef
+```
+
+app sandbox 读不到 daemon 的 token 文件，所以 token 只能由外部传入（`--dart-define`
+或同名环境变量）。
+
 ## License
 
 TBD。
