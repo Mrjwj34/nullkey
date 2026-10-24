@@ -5,7 +5,7 @@ import "strings"
 
 // These values are overridden with -ldflags in the Makefile and release builds.
 var (
-	Version = "0.1.0-dev"
+	Version = "0.1.1-dev"
 	Commit  = "unknown"
 	Date    = "unknown"
 )

@@ -150,7 +150,16 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          flutter build macos --release
+          build_args=(--release)
+          if [ -n "$TAG" ]; then
+            build_args+=(--build-name "$VERSION")
+          fi
+          flutter build macos "${build_args[@]}"
+          if [ -n "$TAG" ]; then
+            app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+              build/macos/Build/Products/Release/Nullkey.app/Contents/Info.plist)
+            test "$app_version" = "$VERSION"
+          fi
           codesign --force --deep --sign - \
             build/macos/Build/Products/Release/Nullkey.app
           codesign --verify --deep --verbose \
