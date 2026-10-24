@@ -171,6 +171,15 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build daemon for GUI integration tests
+        run: go build -o "$RUNNER_TEMP/nullkeyd-gui-test" ./cmd/nullkeyd
+
       - name: flutter pub get
         working-directory: apps/nullkey-gui
         run: flutter pub get
@@ -181,6 +190,8 @@ jobs:
 
       - name: flutter test
         working-directory: apps/nullkey-gui
+        env:
+          NULLKEY_TEST_DAEMON: ${{ runner.temp }}/nullkeyd-gui-test
         run: flutter test
   contract:
     name: OpenAPI contract

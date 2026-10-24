@@ -49,18 +49,19 @@ type Config struct {
 
 // Spec describes a sandbox process launch. It never contains credentials.
 type Spec struct {
-	SandboxID     string
-	HarnessID     string
-	HarnessRoot   string
-	WorkspacePath string
-	StatePath     string
-	CachePath     string
-	Command       []string
-	Token         string
-	NetworkMode   domain.NetworkMode
-	Cols          int
-	Rows          int
-	ExtraEnv      []string
+	SandboxID         string
+	HarnessID         string
+	HarnessRoot       string
+	WorkspacePath     string
+	WorkspaceReadOnly bool
+	StatePath         string
+	CachePath         string
+	Command           []string
+	Token             string
+	NetworkMode       domain.NetworkMode
+	Cols              int
+	Rows              int
+	ExtraEnv          []string
 }
 
 // Process is a running sandbox process.
@@ -155,12 +156,13 @@ func (r *Runtime) Start(ctx context.Context, spec Spec) (*Process, error) {
 	}
 
 	profile := BuildProfile(ProfileOptions{
-		Workspace:   spec.WorkspacePath,
-		State:       spec.StatePath,
-		Cache:       spec.CachePath,
-		HostHome:    r.cfg.HostHome,
-		HarnessRoot: spec.HarnessRoot,
-		Mode:        spec.NetworkMode,
+		Workspace:         spec.WorkspacePath,
+		WorkspaceReadOnly: spec.WorkspaceReadOnly,
+		State:             spec.StatePath,
+		Cache:             spec.CachePath,
+		HostHome:          r.cfg.HostHome,
+		HarnessRoot:       spec.HarnessRoot,
+		Mode:              spec.NetworkMode,
 	})
 
 	args := []string{"__sandbox_exec", "--cwd", spec.WorkspacePath, "--"}

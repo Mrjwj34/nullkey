@@ -51,7 +51,7 @@ class MainFlutterWindow: NSWindow {
 
     case "enroll":
       let accountName = (args["accountName"] as? String) ?? "nullkey-local-operator"
-      let reason = (args["reason"] as? String) ?? "注册 Nullkey 本地 Passkey 硬件信任根"
+      let reason = (args["reason"] as? String) ?? "启用 Nullkey 本机验证"
       let interactive = (args["interactive"] as? Bool) ?? true
       authenticateIfNeeded(reason: reason, interactive: interactive) { authOk, authMethod, errorMsg in
         guard authOk else {
@@ -85,7 +85,7 @@ class MainFlutterWindow: NSWindow {
     case "assert":
       let challenge = (args["challenge"] as? String) ?? UUID().uuidString
       let scope = (args["scope"] as? String) ?? "vault.unlock"
-      let reason = (args["reason"] as? String) ?? "使用 Apple Passkey 授权 Nullkey 敏感操作"
+      let reason = (args["reason"] as? String) ?? "验证身份以授权 Nullkey 敏感操作"
       let interactive = (args["interactive"] as? Bool) ?? true
       authenticateIfNeeded(reason: reason, interactive: interactive) { authOk, authMethod, errorMsg in
         guard authOk else {
@@ -148,7 +148,7 @@ class MainFlutterWindow: NSWindow {
     case .opticID:
       biometryType = "Optic ID"
     case .none:
-      biometryType = ownerAuthAvailable ? "macOS Passcode / Watch" : "Secure Enclave Key"
+      biometryType = ownerAuthAvailable ? "macOS Passcode / Watch" : "Unavailable"
     @unknown default:
       biometryType = "Touch ID"
     }
@@ -171,14 +171,14 @@ class MainFlutterWindow: NSWindow {
     completion: @escaping (Bool, String, String?) -> Void
   ) {
     if !interactive {
-      completion(true, SecureEnclave.isAvailable ? "Secure Enclave + Touch ID" : "Platform Key", nil)
+      completion(false, "macOS Device Owner Auth", "本机验证必须通过系统认证。")
       return
     }
     let context = LAContext()
     context.localizedCancelTitle = "取消授权"
     var error: NSError?
     if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
-      let methodLabel = context.biometryType == .touchID ? "Touch ID (Secure Enclave)" : "macOS Device Owner Auth"
+      let methodLabel = context.biometryType == .touchID ? "Touch ID" : "macOS Device Owner Auth"
       context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, evalError in
         DispatchQueue.main.async {
           if success {
@@ -189,7 +189,7 @@ class MainFlutterWindow: NSWindow {
         }
       }
     } else {
-      completion(true, SecureEnclave.isAvailable ? "Secure Enclave Direct" : "Platform P-256", nil)
+      completion(false, "macOS Device Owner Auth", error?.localizedDescription ?? "macOS 系统验证不可用。")
     }
   }
 }
@@ -204,6 +204,8 @@ private final class PasskeyVaultStore {
   private let createdAtKey = "dev.nullkey.gui.passkey.createdAt"
   private let signCountKey = "dev.nullkey.gui.passkey.signCount"
 
+  // This software key signs local GUI receipts; it is not a Secure Enclave
+  // or WebAuthn credential and is not used to authenticate daemon requests.
   private func loadOrCreatePrivateKey() -> P256.Signing.PrivateKey {
     if let rawData = defaults.data(forKey: privateKeySeedKey),
        let existing = try? P256.Signing.PrivateKey(rawRepresentation: rawData) {
@@ -229,7 +231,7 @@ private final class PasskeyVaultStore {
       "accountName": accountName,
       "publicKeySpkiBase64": spkiBase64,
       "authenticatorAttachment": "platform",
-      "backedBySecureEnclave": SecureEnclave.isAvailable,
+      "backedBySecureEnclave": false,
       "createdAt": createdAt,
       "signCount": signCount,
     ]
@@ -256,7 +258,7 @@ private final class PasskeyVaultStore {
       "accountName": accountName,
       "publicKeySpkiBase64": key.publicKey.derRepresentation.base64EncodedString(),
       "authenticatorAttachment": "platform",
-      "backedBySecureEnclave": SecureEnclave.isAvailable,
+      "backedBySecureEnclave": false,
       "authMethod": authMethod,
       "createdAt": nowIso,
       "signCount": defaults.integer(forKey: signCountKey),
@@ -311,7 +313,7 @@ private final class PasskeyVaultStore {
       "signatureBase64": signature.derRepresentation.base64EncodedString(),
       "signCount": nextCount,
       "userVerified": true,
-      "backedBySecureEnclave": SecureEnclave.isAvailable,
+      "backedBySecureEnclave": false,
       "verifiedAt": verifiedAt,
     ]
   }

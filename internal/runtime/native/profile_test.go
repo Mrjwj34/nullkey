@@ -115,6 +115,30 @@ func TestBuildProfileCanonicalSymlinkPaths(t *testing.T) {
 	}
 }
 
+func TestBuildProfileReadOnlyAliases(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, opts := range []ProfileOptions{
+		{Workspace: alias, WorkspaceReadOnly: true},
+		{HarnessRoot: alias},
+	} {
+		profile := BuildProfile(opts)
+		for _, path := range []string{alias, canonicalPath(alias)} {
+			deny := "(deny file-write* (subpath " + quote(path) + "))"
+			if at := strings.LastIndex(profile, deny); at < 0 || at < strings.LastIndex(profile, "(allow file-write*") {
+				t.Fatalf("read-only path %q must be protected after all write allowances:\n%s", path, profile)
+			}
+		}
+	}
+}
+
 func TestBuildProfileNetworkModes(t *testing.T) {
 	base := ProfileOptions{Workspace: "/nonexistent-nullkey/ws"}
 

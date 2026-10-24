@@ -5,12 +5,9 @@ import 'package:flutter/services.dart';
 
 import '../models/nullkey_models.dart';
 
-/// End-to-end Apple Passkey (`rpId: local.nullkey.vault`) security service.
-///
-/// Communicates with `MainFlutterWindow.swift` over `dev.nullkey.gui/passkey`
-/// using `LocalAuthentication` (Touch ID / macOS Device Owner Auth) and
-/// `CryptoKit` (`SecureEnclave.P256.Signing` + P-256 hardware-backed keys),
-/// and provides an instant deterministic WebAuthn P-256 engine in Mock/Test mode.
+/// Local macOS authentication for sensitive GUI actions. Native failures never
+/// fall back to the deterministic demo/test implementation. The native receipt
+/// uses a software P-256 key; it is not a WebAuthn or Secure Enclave credential.
 class PasskeySecurityService {
   static const String channelName = 'dev.nullkey.gui/passkey';
   static const String defaultRpId = 'local.nullkey.vault';
@@ -27,9 +24,10 @@ class PasskeySecurityService {
 
   PasskeySecurityService({
     MethodChannel? channel,
-    this.interactiveBiometrics = false,
+    this.interactiveBiometrics = true,
     this.useNativeBridge = false,
   }) : _channel = channel ?? const MethodChannel(channelName) {
+    if (useNativeBridge) return;
     _cachedRegistration = const PasskeyRegistration(
       credentialId: 'nk-passkey-se-9f4a2c81b03e',
       rpId: defaultRpId,
@@ -56,28 +54,35 @@ class PasskeySecurityService {
           final regMap = raw['registration'] as Map<Object?, Object?>?;
           final reg = regMap != null
               ? PasskeyRegistration.fromMap(regMap)
-              : _cachedRegistration;
+              : null;
           if (reg != null) {
             _cachedRegistration = reg;
           }
           return PasskeyCapabilities(
             rpId: (raw['rpId'] as String?) ?? rpId,
-            biometryAvailable: (raw['biometryAvailable'] as bool?) ?? true,
+            biometryAvailable: (raw['biometryAvailable'] as bool?) ?? false,
             deviceOwnerAuthAvailable:
-                (raw['deviceOwnerAuthAvailable'] as bool?) ?? true,
+                (raw['deviceOwnerAuthAvailable'] as bool?) ?? false,
             secureEnclaveAvailable:
-                (raw['secureEnclaveAvailable'] as bool?) ?? true,
-            biometryType:
-                (raw['biometryType'] as String?) ?? 'Touch ID (Secure Enclave)',
+                (raw['secureEnclaveAvailable'] as bool?) ?? false,
+            biometryType: (raw['biometryType'] as String?) ?? '不可用',
             enrolled: ((raw['enrolled'] as bool?) ?? false) || reg != null,
             registration: reg,
           );
         }
       } on MissingPluginException {
-        // Fallback to Mock Secure Enclave capabilities.
+        // Report unavailable; never substitute demo capabilities.
       } on PlatformException {
-        // Fallback to Mock Secure Enclave capabilities.
+        // Report unavailable; never substitute demo capabilities.
       }
+      return PasskeyCapabilities(
+        rpId: rpId,
+        biometryAvailable: false,
+        deviceOwnerAuthAvailable: false,
+        secureEnclaveAvailable: false,
+        biometryType: '不可用',
+        enrolled: false,
+      );
     }
 
     return PasskeyCapabilities(
@@ -114,7 +119,10 @@ class PasskeySecurityService {
           'reason': reason,
           'interactive': interactive ?? interactiveBiometrics,
         });
-        if (raw != null) {
+        if (raw != null &&
+            raw['rpId'] == rpId &&
+            _hasText(raw, 'credentialId') &&
+            _hasText(raw, 'publicKeySpkiBase64')) {
           final reg = PasskeyRegistration.fromMap(raw);
           _cachedRegistration = reg;
           return reg;
@@ -126,8 +134,9 @@ class PasskeySecurityService {
           message: e.message ?? '已取消验证，没有做任何更改。',
         );
       } on MissingPluginException {
-        // Deterministic WebAuthn registration in Mock/Test mode.
+        throw _nativeUnavailable;
       }
+      throw _nativeUnavailable;
     }
 
     final nowIso = DateTime.now().toUtc().toIso8601String();
@@ -174,57 +183,33 @@ class PasskeySecurityService {
           'reason': reason,
           'interactive': interactive ?? interactiveBiometrics,
         });
-        if (raw != null) {
-          sw.stop();
-          final signCount =
-              (raw['signCount'] as num?)?.toInt() ?? (++_fallbackSignCounter);
-          final credId =
-              (raw['credentialId'] as String?) ??
-              (_cachedRegistration?.credentialId ??
-                  'nk-passkey-se-9f4a2c81b03e');
-          final authMethod =
-              (raw['authMethod'] as String?) ?? 'Touch ID · Secure Enclave';
-          _cachedRegistration = PasskeyRegistration(
-            credentialId: credId,
-            rpId: rpId,
-            accountName: 'corcton@macbook-pro.local',
-            publicKeySpkiBase64: 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE8xNullkeyAppleSecureEnclaveP256Key9f4a2c81b03e==',
-            authenticatorAttachment: 'platform',
-            backedBySecureEnclave:
-                (raw['backedBySecureEnclave'] as bool?) ?? true,
-            authMethod: authMethod,
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-            signCount: signCount,
-          );
-          return PasskeyAssertion(
-            credentialId: credId,
-            rpId: (raw['rpId'] as String?) ?? rpId,
-            scope: scope,
-            challenge: (raw['challenge'] as String?) ?? challenge,
-            authMethod: authMethod,
-            clientDataJSONBase64:
-                (raw['clientDataJSONBase64'] as String?) ??
-                _encodeClientData(
-                  rpId: rpId,
-                  challenge: challenge,
-                  scope: scope,
-                ),
-            authenticatorDataBase64:
-                (raw['authenticatorDataBase64'] as String?) ??
-                base64Encode(utf8.encode('rp:$rpId|flags:0x05|cnt:$signCount')),
-            signatureBase64:
-                (raw['signatureBase64'] as String?) ??
-                base64Encode(
-                  utf8.encode('MEYCIQNullkeyP256Sig:$challenge:$signCount'),
-                ),
-            signCount: signCount,
-            userVerified: (raw['userVerified'] as bool?) ?? true,
-            backedBySecureEnclave:
-                (raw['backedBySecureEnclave'] as bool?) ?? true,
-            verifiedAt: DateTime.now().toUtc(),
-            latencyMs: max(8, sw.elapsedMilliseconds),
-          );
+        if (raw == null ||
+            raw['userVerified'] != true ||
+            raw['rpId'] != rpId ||
+            raw['scope'] != scope.id ||
+            raw['challenge'] != challenge ||
+            !_hasText(raw, 'credentialId') ||
+            !_hasText(raw, 'clientDataJSONBase64') ||
+            !_hasText(raw, 'authenticatorDataBase64') ||
+            !_hasText(raw, 'signatureBase64') ||
+            raw['signCount'] is! num) {
+          throw _nativeUnavailable;
         }
+        return PasskeyAssertion(
+          credentialId: raw['credentialId'] as String,
+          rpId: rpId,
+          scope: scope,
+          challenge: challenge,
+          authMethod: (raw['authMethod'] as String?) ?? 'macOS 系统验证',
+          clientDataJSONBase64: raw['clientDataJSONBase64'] as String,
+          authenticatorDataBase64: raw['authenticatorDataBase64'] as String,
+          signatureBase64: raw['signatureBase64'] as String,
+          signCount: (raw['signCount'] as num).toInt(),
+          userVerified: true,
+          backedBySecureEnclave: raw['backedBySecureEnclave'] == true,
+          verifiedAt: DateTime.now().toUtc(),
+          latencyMs: sw.elapsedMilliseconds,
+        );
       } on PlatformException catch (e) {
         throw NullkeyApiException(
           statusCode: 401,
@@ -232,7 +217,7 @@ class PasskeySecurityService {
           message: e.message ?? '已取消验证，没有做任何更改。',
         );
       } on MissingPluginException {
-        // Deterministic WebAuthn assertion in Mock/Test mode.
+        throw _nativeUnavailable;
       }
     }
 
@@ -289,13 +274,22 @@ class PasskeySecurityService {
       try {
         await _channel.invokeMethod<Object?>('revoke');
       } on MissingPluginException {
-        // Ignore in widget test mode.
+        throw _nativeUnavailable;
       } on PlatformException {
-        // Ignore.
+        throw _nativeUnavailable;
       }
     }
     _cachedRegistration = null;
   }
+
+  static const _nativeUnavailable = NullkeyApiException(
+    statusCode: 401,
+    code: 'passkey_unavailable',
+    message: '本机验证未完成，操作已停止。请确认 macOS 系统验证可用后重试。',
+  );
+
+  static bool _hasText(Map<Object?, Object?> raw, String key) =>
+      raw[key] is String && (raw[key] as String).isNotEmpty;
 
   String _generateChallenge(String scopeId) {
     final micros = DateTime.now().microsecondsSinceEpoch;

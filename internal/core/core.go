@@ -313,8 +313,7 @@ var harnessCatalog = []Harness{
 	{ID: "dsh", Name: "DSH", Kind: "tui", Version: "latest", Runtime: "native"},
 }
 
-// ListHarnesses reports installed harnesses. Installation is a real local
-// adapter marker plus a PATH probe; nothing is faked as installed.
+// ListHarnesses reports harnesses whose executables are available to launch.
 func (s *Service) ListHarnesses() []Harness {
 	out := make([]Harness, 0, len(harnessCatalog))
 	for _, h := range harnessCatalog {
@@ -331,10 +330,7 @@ func (s *Service) harnessInstalled(id string) bool {
 	if id == "shell" {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(s.Home, "harnesses", id, "installed.json")); err == nil {
-		return true
-	}
-	_, err := exec.LookPath(id)
+	_, err := lookPathOutsideHome(id)
 	return err == nil
 }
 

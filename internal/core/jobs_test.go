@@ -42,8 +42,32 @@ func TestInstallHarnessUnknown(t *testing.T) {
 	wantError(t, err, http.StatusNotFound, "not_found")
 }
 
+func TestInstallHarnessMissingExecutableFails(t *testing.T) {
+	svc, home := newTestService(t)
+	t.Setenv("PATH", t.TempDir())
+	job, err := svc.InstallHarness(context.Background(), "codex", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, svc, job.ID, domain.JobFailed)
+	if done.Error == nil || !strings.Contains(*done.Error, "executable") {
+		t.Fatalf("missing actionable failure: %+v", done)
+	}
+	if svc.harnessInstalled("codex") {
+		t.Fatal("missing executable reported installed")
+	}
+	if _, err := os.Stat(filepath.Join(home, "harnesses", "codex")); !os.IsNotExist(err) {
+		t.Fatalf("failed validation committed an install marker: %v", err)
+	}
+}
+
 func TestInstallHarnessSuccess(t *testing.T) {
 	svc, home := newTestService(t)
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
 	ctx := context.Background()
 	job, err := svc.InstallHarness(ctx, "codex", "1.2.3")
 	if err != nil {

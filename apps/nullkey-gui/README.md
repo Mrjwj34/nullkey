@@ -10,7 +10,9 @@ Nullkey 的 macOS 桌面客户端，Flutter + Forui。界面按 `docs/00-product
 1. `NULLKEY_DAEMON_URL` + `NULLKEY_DAEMON_TOKEN`（`--dart-define` 或同名环境变量）；
 2. daemon 写出的 `<NULLKEY_HOME>/daemon-token`，默认
    `~/Library/Application Support/Nullkey/daemon-token`，地址用 `http://127.0.0.1:49152`；
-3. 都没有就跑内置的 Core Mock 引擎（`lib/services/core_mock_backend.dart`）。
+3. 都没有时显示未连接，并自动等待 daemon 的 token 文件。不会隐式进入模拟模式。
+
+Core Mock 引擎（`lib/services/core_mock_backend.dart`）须显式设置 `NULLKEY_DEMO=1`。
 
 规则在 `lib/services/daemon_connection.dart`。为了读 token 文件，Debug 和 Release 都不开
 app sandbox。Core Mock 按 `docs/08-api-contract.md` 的错误码、锁和任务状态机运行，
@@ -31,7 +33,8 @@ make build && ./bin/nullkeyd --listen 127.0.0.1:49152
 ```sh
 cd apps/nullkey-gui
 flutter pub get
-flutter run -d macos          # 自动发现本机 daemon；没有 token 就是 Core Mock
+flutter run -d macos          # 自动发现本机 daemon；没有 token 就等待连接
+flutter run -d macos --dart-define=NULLKEY_DEMO=1  # 显式演示模式
 ```
 
 连别的端口或别的 token 时显式传：
@@ -53,10 +56,23 @@ flutter run -d macos \
 
 ## 验证
 
+真实 daemon 模式的敏感操作使用 macOS LocalAuthentication（Touch ID 或系统密码），
+取消或认证不可用时停止操作。当前本机验证回执使用软件 P-256 签名，不是 WebAuthn
+Passkey 或 Secure Enclave 密钥；该回执不参与 daemon API 鉴权。
+
 ```sh
 flutter analyze
 flutter test
 flutter build macos --debug
+```
+
+真实后端集成测试（CI 自动运行，使用临时目录、file secret backend 和假凭证）：
+
+```sh
+# 在仓库根目录构建，再从 GUI 目录运行
+go build -o bin/nullkeyd ./cmd/nullkeyd
+cd apps/nullkey-gui
+NULLKEY_TEST_DAEMON="$PWD/../../bin/nullkeyd" flutter test test/daemon_integration_test.dart
 ```
 
 发布产物（ad-hoc 签名的 `.app` 与 dmg）由 `.github/workflows/release.yml` 构建，

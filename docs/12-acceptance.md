@@ -74,6 +74,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-API-009 | P1/P9 | `GET /events` 返回 `text/event-stream`；sandbox/job/oauth/network/service 事件按契约 `type` 推送；慢客户端不阻塞。 | `TestAC_API_009_SSEEvents` | ✅ |
 | AC-API-010 | P1 | `POST /jobs/{job_id}/cancel` 仅取消可取消的安装 job；状态 `cancelling → cancelled`；重复取消返回当前状态；已成功/失败/不可取消返回 409；取消后无半安装版本。 | `TestAC_API_010_JobCancel` | ✅ |
 | AC-API-011 | P5 | `POST /oauth/flows/{flow_id}/cancel` 使 pending flow 进入 `cancelled` 并失效 state/PKCE；迟到 callback 不写凭证；已成功返回 409。 | `TestAC_API_011_OAuthCancel` | ✅ |
+| AC-API-012 | P6 | 本机缺少 harness 可执行程序时安装任务失败，不能仅凭 `installed.json` 报告已安装；GUI 按 `job_id` 获取任务并展示失败原因。 | `TestInstallHarnessMissingExecutableFails`、`TestListHarnessesAndInstalled`、GUI daemon integration | ✅ |
 | AC-PROD-001 | Release | Release 时黑盒验证 health/capabilities（`native`、`services_only/filtered/open`、tunnel/artifacts）、auth 错误 envelope、loopback CORS；响应不含 daemon token 或凭证前缀。 | `TestProduct_*` | ✅ |
 
 ## 3. 零凭证与 token
@@ -90,6 +91,8 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-SEC-008 | P3 | 凭证写入/读取不走 argv；进程列表不可见 `sk-*`/OAuth token；使用 Security.framework 或等价 API。 | `TestAC_SEC_008_KeychainNoArgv` + 人工检查 | ✅ |
 | AC-SEC-009 | P4 | daemon token 不能访问 gateway/proxy；sandbox token 不能访问 `/api/v1`；两个平面 listener 独立。 | `TestAC_SEC_009_TokenPlaneSeparation` | ✅ |
 | AC-SEC-010 | P9 | `POST /sandboxes/{id}/scan` 只检查 `generated_runtime`，报告 `excluded=["workspace","user_imports","user_input"]`；受控样本 `hits=0`；检查失败返回错误，不伪装零命中。 | `TestAC_SEC_010_NoSecretScan` | ✅ |
+| AC-SEC-011 | P2 | 沙箱可以读取但不能改写宿主机共享的 harness 安装目录，包含符号链接的真实路径。 | `TestHarnessInstallationIsReadOnly`、`TestBuildProfileReadOnlyAliases` | ✅ |
+| AC-SEC-012 | GUI | 真实后端启用交互式 macOS 本机验证；取消、桥接缺失、空响应或未验证/不匹配的断言不得授权敏感操作，不能回退模拟成功。 | `passkey_service_test.dart` + 打包应用人工取消验证 | ✅ |
 
 ## 4. Runtime 与终端
 
@@ -146,6 +149,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-STATE-002 | P1 | `DELETE /workspaces/{id}` 默认只删记录并保留文件；`delete_files=true` 仅 managed 且 `confirm_name` 匹配时删目录；external 拒绝；活动 sandbox 引用返回 409 `state_locked`。不再提供 workspace reset。 | `TestAC_STATE_002_WorkspaceDelete` | ✅ |
 | AC-STATE-003 | P1 | `DELETE /states/{id}?confirm=true` 删目录+记录；`reset` 清空内容但保留记录；两者都不影响 workspace；活动引用 409。 | `TestAC_STATE_003_StateResetDelete` | ✅ |
 | AC-STATE-004 | P1 | `DELETE /sandboxes/{id}` 始终保留 workspace/state；传入 `delete_state`/`delete_workspace`（即使 false）返回 400 `invalid_request`。 | `TestAC_STATE_004_SandboxDelete` | ✅ |
+| AC-STATE-005 | P2 | `default_mode=ro` 由 Seatbelt 阻止覆盖、创建、重命名、删除工作区文件；仍可读取，state 仍可写；rw 工作区保持可写。 | `TestAC_STATE_005_ReadOnlyWorkspace` | ✅ |
 | AC-ART-001 | P8 | 文件列表/预览只读；路径 canonicalize 到 workspace；symlink 逃逸和 `..` 被拒；>1MB 截断并标记。 | `TestAC_ART_001_FileSafety` | ✅ |
 | AC-ART-002 | P8 | `GET /workspaces/{id}/diff` 返回 git patch；非 git 目录返回空/文件级变更而非 500。 | `TestAC_ART_002_Diff` | ✅ |
 
@@ -189,6 +193,13 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | 停止/删除/重启后可继续使用 workspace/state；token 轮换 | AC-RT-005、AC-SEC-004 |
 
 ## 12. 里程碑 gate
+
+GUI CI 额外构建真实 `nullkeyd`，运行 `apps/nullkey-gui/test/daemon_integration_test.dart`：
+安装检查失败/成功、假凭证增删、工作区创建、终端输入与断开重接、产物预览、凭证扫描、
+停止再启动保留 workspace/state、清理测试数据。无 token 时等待并自动连接由
+`daemon_backend_test.dart` 覆盖；首次未连接账号不显示“已失效”由 widget test 覆盖。
+Codex 的 API Key 与 ChatGPT 登录模式分别验证配置：只有使用 ChatGPT OAuth 时
+启用 ChatGPT 模型目录，避免 API Key 用户启动时出现无关的 401。
 
 | Gate | 必须通过 | 允许跳过 |
 |---|---|---|

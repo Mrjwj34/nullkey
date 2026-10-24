@@ -250,7 +250,8 @@ NULLKEY_SECRET_BACKEND=file \
 - artifacts：只读列表/预览/diff，canonicalize + symlink 防逃逸，1MiB 截断。
 - audit/SSE/redaction、scan（仅 generated_runtime）、SLO 基线。
 - GUI：`apps/nullkey-gui`（Flutter + Forui）按 OpenAPI 对接 daemon，连接来源为
-  dart-define/环境变量 → `<NULLKEY_HOME>/daemon-token` → Core Mock 演示态。
+  dart-define/环境变量 → `<NULLKEY_HOME>/daemon-token`；缺少 daemon 时等待并重试，
+  Core Mock 仅在显式设置 `NULLKEY_DEMO=1` 时启用。
 
 未实现/明确不做：
 

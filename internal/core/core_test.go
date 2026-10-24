@@ -549,15 +549,15 @@ func TestListHarnessesAndInstalled(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 	for _, item := range svc.ListHarnesses() {
-		if item.ID == "codex" && !item.Installed {
-			t.Fatalf("codex marker ignored")
+		if item.ID == "codex" && item.Installed {
+			t.Fatalf("marker alone must not report a missing executable as installed")
 		}
 	}
 	if !svc.harnessInstalled("shell") {
 		t.Fatalf("shell not installed")
 	}
-	if !svc.harnessInstalled("codex") {
-		t.Fatalf("codex marker not detected")
+	if svc.harnessInstalled("codex") {
+		t.Fatalf("codex marker must not substitute for an executable")
 	}
 
 	// claude is discovered via PATH.

@@ -444,6 +444,33 @@ func TestStartLifecyclePTY(t *testing.T) {
 	}
 }
 
+func TestHarnessInstallationIsReadOnly(t *testing.T) {
+	requireNativeHost(t)
+	r := newTestRuntime(t, Config{})
+	spec := newSpec(t, "sbx_harness_readonly")
+	spec.HarnessRoot = t.TempDir()
+	installed := filepath.Join(spec.HarnessRoot, "agent.js")
+	if err := os.WriteFile(installed, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := r.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop(context.Background())
+	command := "cat '" + installed + "'; echo modified > '" + installed + "'; printf 'HARNESS_%s\\n' done\n"
+	if _, err := p.Write([]byte(command)); err != nil {
+		t.Fatal(err)
+	}
+	output := readUntil(t, p, "HARNESS_done", 5*time.Second)
+	if !strings.Contains(output, "original\r\n") {
+		t.Fatalf("installed harness must remain readable: %s", output)
+	}
+	if data, err := os.ReadFile(installed); err != nil || string(data) != "original\n" {
+		t.Fatalf("sandbox modified shared harness installation: %q %v", data, err)
+	}
+}
+
 func TestStartExitCodeAndStatsAfterExit(t *testing.T) {
 	requireNativeHost(t)
 	r := newTestRuntime(t, Config{})

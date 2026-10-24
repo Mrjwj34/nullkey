@@ -221,6 +221,20 @@ void main() {
       expect(_key('reauth-alert'), findsOneWidget);
       expect(_key('reauth-reconnect-button'), findsOneWidget);
     });
+
+    testWidgets('a new workspace asks to connect instead of claiming expiry', (
+      tester,
+    ) async {
+      final c = await _pumpApp(tester, seed: MockSeed.firstRun);
+      expect(
+        await c.createWorkspace(name: 'first', kind: WorkspaceKind.managed),
+        isNull,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('尚未连接ChatGPT 账号'), findsOneWidget);
+      expect(find.text('ChatGPT 账号登录已失效'), findsNothing);
+      expect(find.text('连接…'), findsOneWidget);
+    });
   });
 
   group('terminal', () {

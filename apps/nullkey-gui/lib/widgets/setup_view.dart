@@ -352,10 +352,12 @@ class _InstallStep extends StatelessWidget {
       );
     }
     final job = c.jobFor(HarnessKind.codex);
+    final live =
+        c.capabilities.connectionMode == DaemonConnectionMode.liveDaemon;
     SmallButton install(String label) => SmallButton(
       key: const Key('setup-install-button'),
       variant: isCurrent ? .primary : .outline,
-      label: label,
+      label: live ? '检查安装' : label,
       onPress: () => c.startHarnessInstall(HarnessKind.codex),
     );
 
@@ -372,7 +374,13 @@ class _InstallStep extends StatelessWidget {
           ? null
           : Semantics(liveRegion: true, child: status),
       actions: actions,
-      below: below,
+      below:
+          below ??
+          (live
+              ? const Text(
+                  '请先在宿主机安装 Codex CLI，再检查安装。Nullkey 会从 nullkeyd 的 PATH 查找 codex。',
+                )
+              : null),
     );
 
     return switch (job?.status) {

@@ -12,8 +12,8 @@ import (
 )
 
 // InstallHarness starts a cancellable local install job. Remote downloads are
-// deliberately out of scope for v1; the job stages an adapter marker and
-// commits atomically, and cancellation removes staging.
+// deliberately out of scope for v1; the job validates a host executable,
+// stages its adapter marker, and commits atomically. Cancellation removes staging.
 func (s *Service) InstallHarness(ctx context.Context, harnessID, version string) (domain.Job, error) {
 	found := false
 	for _, h := range harnessCatalog {
@@ -99,6 +99,12 @@ func (s *Service) runInstall(ctx context.Context, jobID, harnessID, version stri
 	case <-time.After(250 * time.Millisecond):
 	}
 
+	if !s.harnessInstalled(harnessID) {
+		_ = os.RemoveAll(staging)
+		msg := "harness executable is unavailable; install it on the host and ensure it is on nullkeyd's PATH"
+		update(domain.JobFailed, 0, msg, &msg)
+		return
+	}
 	marker, _ := json.Marshal(map[string]any{
 		"harness_id":   harnessID,
 		"version":      version,

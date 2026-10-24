@@ -14,7 +14,7 @@ const defaultDaemonUrl = 'http://127.0.0.1:49152';
 /// Resolves the connection without touching the filesystem, so the precedence
 /// rules stay testable: an explicit url/token pair wins, otherwise the token
 /// the daemon wrote for this host is used with [defaultDaemonUrl]. Returns null
-/// when nothing is configured, which keeps the app on Core Mock.
+/// for an invalid URL. An empty token keeps the app waiting for nullkeyd.
 DaemonConnection? resolveDaemonConnection({
   String? url,
   String? token,
@@ -24,14 +24,11 @@ DaemonConnection? resolveDaemonConnection({
   final explicitToken = _clean(token);
   final discovered = _clean(fileToken);
   final effectiveToken = explicitToken ?? discovered;
-  if (effectiveToken == null) {
-    return null;
-  }
   final target = Uri.tryParse(explicitUrl ?? defaultDaemonUrl);
   if (target == null || !target.hasScheme || target.host.isEmpty) {
     return null;
   }
-  return DaemonConnection(baseUrl: target, token: effectiveToken);
+  return DaemonConnection(baseUrl: target, token: effectiveToken ?? '');
 }
 
 /// Path of the token file the daemon writes when `NULLKEY_DAEMON_TOKEN` is not

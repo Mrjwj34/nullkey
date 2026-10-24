@@ -72,6 +72,53 @@ func TestAC_RT_001_SandboxLifecycle(t *testing.T) {
 	}
 }
 
+// A read-only workspace must be enforced by Seatbelt, not just by the GUI
+// label or the workspace lock. Keep state writable so the harness can run.
+func TestAC_STATE_005_ReadOnlyWorkspace(t *testing.T) {
+	requireDarwin(t)
+	for _, mode := range []string{"ro", "rw"} {
+		t.Run(mode, func(t *testing.T) {
+			d := startDaemon(t)
+			root := t.TempDir()
+			original := filepath.Join(root, "original.txt")
+			if err := os.WriteFile(original, []byte("original\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			resp, raw := d.doAuthed(t, http.MethodPost, "/workspaces", map[string]any{
+				"name": "permissions", "root_path": root, "default_mode": mode,
+			})
+			if resp.StatusCode != http.StatusCreated {
+				t.Fatalf("create workspace: %d %s", resp.StatusCode, raw)
+			}
+			ws := decodeJSON[workspaceResponse](t, raw)
+			sb := d.createSandbox(t, ws.ID, "shell", "")
+			term := dialTerminal(t, d, sb.ID)
+			defer term.close()
+			term.input("cat original.txt; echo changed > original.txt; echo new > new.txt; mkdir new-dir; mv original.txt renamed.txt; rm -f original.txt; echo state > \"$HOME/state-write\"; printf 'PERMISSIONS_%s\\n' done\n")
+			output := term.readUntil("PERMISSIONS_done", 5*time.Second)
+			if !strings.Contains(output, "original\r\n") {
+				t.Fatalf("workspace could not be read: %s", output)
+			}
+			stateFile := filepath.Join(d.home, "states", "shell", sb.StateID, "home", "state-write")
+			if data, err := os.ReadFile(stateFile); err != nil || string(data) != "state\n" {
+				t.Fatalf("state must remain writable: %q %v", data, err)
+			}
+			if mode == "ro" {
+				if data, err := os.ReadFile(original); err != nil || string(data) != "original\n" {
+					t.Fatalf("read-only workspace was modified: %q %v; terminal=%s", data, err, output)
+				}
+				for _, name := range []string{"new.txt", "new-dir", "renamed.txt"} {
+					if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+						t.Fatalf("read-only workspace allowed creating %s: %v", name, err)
+					}
+				}
+			} else if data, err := os.ReadFile(filepath.Join(root, "renamed.txt")); err != nil || string(data) != "changed\n" {
+				t.Fatalf("read-write workspace must remain writable: %q %v", data, err)
+			}
+		})
+	}
+}
+
 func TestAC_RT_002_TerminalWebSocket(t *testing.T) {
 	requireDarwin(t)
 	d := startDaemon(t)
