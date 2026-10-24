@@ -193,6 +193,13 @@ jobs:
         env:
           NULLKEY_TEST_DAEMON: ${{ runner.temp }}/nullkeyd-gui-test
         run: flutter test
+
+      - name: build GUI and check native startup
+        run: |
+          cd apps/nullkey-gui
+          flutter build macos --release
+          cd ../..
+          ./scripts/gui-smoke.sh apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app
   contract:
     name: OpenAPI contract
     runs-on: ubuntu-latest

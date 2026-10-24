@@ -11,8 +11,11 @@ import 'state/nullkey_studio_controller.dart';
 import 'theme/theme.dart';
 import 'widgets/app_shell.dart';
 
-void main() =>
-    runApp(NullkeyApp(controller: NullkeyStudioController(api: _backend())));
+void main() {
+  // The controller queries native authentication before runApp builds the UI.
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(NullkeyApp(controller: NullkeyStudioController(api: _backend())));
+}
 
 /// Connects to nullkeyd using `NULLKEY_DAEMON_URL`/`NULLKEY_DAEMON_TOKEN`
 /// when given (`--dart-define` or environment), otherwise the token the

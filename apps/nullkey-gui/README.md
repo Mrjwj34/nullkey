@@ -56,6 +56,10 @@ flutter run -d macos \
 
 ## 验证
 
+构建后从仓库根目录运行 `./scripts/gui-smoke.sh apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app`，
+检查真实入口在无 daemon 的隔离环境中启动。该检查也在 PR 和 Release CI 执行，
+可发现 widget 测试预先初始化 Flutter binding 后无法暴露的启动错误。
+
 真实 daemon 模式的敏感操作使用 macOS LocalAuthentication（Touch ID 或系统密码），
 取消或认证不可用时停止操作。当前本机验证回执使用软件 P-256 签名，不是 WebAuthn
 Passkey 或 Secure Enclave 密钥；该回执不参与 daemon API 鉴权。

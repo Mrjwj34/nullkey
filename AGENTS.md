@@ -97,7 +97,7 @@ flutter build macos --release
 ```
 
 普通 PR CI 并行跑 static/build/unit/acceptance/coverage/contract 与 GUI 的
-analyze+test，不跑 product/SLO；覆盖率必须 ≥90%。
+analyze+test+原生构建/启动检查，不跑 product/SLO；覆盖率必须 ≥90%。
 发布 GitHub Release 时 `.github/workflows/release.yml` 才运行 product 与 SLO gate，
 两者通过后构建并上传发布产物（两个架构的 daemon 压缩包 + `Nullkey.dmg` + 校验和，
 ad-hoc 签名，未公证）；不要把 release-only 断言塞回 PR CI。
