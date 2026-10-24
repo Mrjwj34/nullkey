@@ -155,6 +155,33 @@ jobs:
           path: coverage.out
           if-no-files-found: ignore
 
+  # The GUI ships from this repository; keep its static analysis and widget
+  # tests in the same gate as the daemon.
+  gui:
+    name: gui (analyze + test)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        working-directory: apps/nullkey-gui
+        run: flutter pub get
+
+      - name: flutter analyze
+        working-directory: apps/nullkey-gui
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: apps/nullkey-gui
+        run: flutter test
   contract:
     name: OpenAPI contract
     runs-on: ubuntu-latest

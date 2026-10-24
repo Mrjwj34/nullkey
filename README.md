@@ -180,8 +180,9 @@ make release-slo      # release-only：SLO gate（严格）
 make release-check    # 产品能力 + SLO
 ```
 
-普通 PR CI 只跑 static/build/unit/acceptance/contract；`.github/workflows/release.yml`
-在 GitHub Release 发布时额外运行产品能力断言与 SLO gate，不作为 PR 检查项。
+普通 PR CI 跑 static/build/unit/acceptance/coverage/contract 与 GUI 的 analyze+test；`.github/workflows/release.yml`
+在 GitHub Release 发布时额外运行产品能力断言与 SLO gate，两个 gate 通过后才构建并上传发布产物；
+这些都不作为 PR 检查项。
 
 - Kernel 计划：[docs/11-kernel-implementation-plan.md](docs/11-kernel-implementation-plan.md)
 - 验收断言：[docs/12-acceptance.md](docs/12-acceptance.md)
@@ -208,21 +209,51 @@ macOS 会把 Keychain 条目的 ACL 视为不同的调用方，可能弹出一�
 ### GUI（apps/nullkey-gui）
 
 macOS 端 Flutter + Forui 工程在 [`apps/nullkey-gui`](apps/nullkey-gui)，通过 `api/openapi.yaml`
-对接 daemon：给了 `NULLKEY_DAEMON_URL` 与 `NULLKEY_DAEMON_TOKEN` 就连真实 daemon，
-不给就跑内置的 Core Mock（带延迟，便于看启动/安装/登录的中间态）。
+对接 daemon。连接按以下顺序解析，第一个拿到 token 的来源生效：
+
+1. `NULLKEY_DAEMON_URL` + `NULLKEY_DAEMON_TOKEN`（`--dart-define` 或同名环境变量）；
+2. daemon 自己写的 `<NULLKEY_HOME>/daemon-token`（默认
+   `~/Library/Application Support/Nullkey/daemon-token`），地址取
+   `http://127.0.0.1:49152`；
+3. 两者都没有就跑内置的 Core Mock（带延迟，便于看启动/安装/登录的中间态）。
+
+也就是说：不带 `NULLKEY_DAEMON_TOKEN` 启动 daemon，让它写出 token 文件，GUI 打开即连；
+要连非默认端口或别的 token 时再显式传。为了读这个文件，发布构建不开 app sandbox
+（见 `macos/Runner/Release.entitlements`）。
 
 ```bash
 cd apps/nullkey-gui
 flutter pub get
 flutter analyze && flutter test
+flutter run -d macos                     # 自动发现本机 daemon
 flutter run -d macos \
   --dart-define=NULLKEY_DAEMON_URL=http://127.0.0.1:49152 \
   --dart-define=NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef
 ```
 
-app sandbox 读不到 daemon 的 token 文件，所以 token 只能由外部传入（`--dart-define`
-或同名环境变量）。
+## 安装（发布产物）
 
+GitHub Release 附带三类产物：`nullkeyd-<version>-darwin-arm64.tar.gz`、
+`nullkeyd-<version>-darwin-amd64.tar.gz`、`Nullkey-<version>.dmg`，以及
+`SHA256SUMS.txt`。
+
+产物只做 ad-hoc 签名（没有 Apple Developer 身份，也没有公证），所以首次打开需要自己
+去掉隔离属性：
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt          # 先核对校验和
+
+tar xzf nullkeyd-<version>-darwin-arm64.tar.gz
+xattr -dr com.apple.quarantine nullkeyd-darwin-arm64/nullkeyd
+./nullkeyd-darwin-arm64/nullkeyd --version
+
+# GUI：把 Nullkey.app 拖进 /Applications 后
+xattr -dr com.apple.quarantine /Applications/Nullkey.app
+open /Applications/Nullkey.app
+```
+
+先启动 daemon（不设 `NULLKEY_DAEMON_TOKEN`，让它写 token 文件），再打开 GUI，
+界面就连到本机 daemon；只打开 GUI 则是 Core Mock 演示态。
 ## License
 
 TBD。
