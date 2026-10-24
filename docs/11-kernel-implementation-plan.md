@@ -471,14 +471,25 @@ make release-slo           # release-only：SLO gate（严格）
    可用 `NULLKEY_SECRET_BACKEND=file` 显式选择。
 4. **MCP**：使用自写 JSON-RPC/SSE 代理（stdlib），支持 Streamable HTTP 与
    tool allowlist；stdio bridge 仍按需后续补充。
-5. **Codex 配置**：模型 gateway 以 provider base URL + auth adapter 注入；
-   不在沙箱写真实 key。
+5. **Codex 配置**：daemon 在沙箱 state 渲染 `config.toml`，provider 指向本机
+   gateway；模型请求使用 per-sandbox token，宿主 OAuth 只由 gateway 注入。Codex
+   还要求 HTTPS ChatGPT origin，因此 gateway 在同一 loopback 端口 mux 明文/TLS，
+   本地 CA 仅通过 `CODEX_CA_CERTIFICATE` 提供给沙箱。
 6. **GitHub OAuth**：支持 PAT/宿主导入；OAuth app 由 `NULLKEY_OAUTH_GITHUB_*`
    配置，未配置时状态为 unavailable。
 7. **desktop runtime**：v1 稳定返回 `501 desktop_unavailable`。
 8. **Service Supervisor manifest**：由 workspace 的 `.nullkey/services.json`
    提供，v1 不新增 GUI 端点；端口限制在 1024–65535（非特权端口）。
 9. **Host Tool Gateway/Terraform**：v1.1；v1 不实现、不修改当前 OpenAPI。
+10. **Codex ChatGPT 凭证**：导入保留 access/id/refresh token 与 account id；
+    `expires_at` 取 access token JWT `exp`，过期前刷新；`ChatGPT-Account-Id` 只由
+    网关注入，沙箱同名头删除。
+11. **Codex 数据平面端点**：`/openai/*` 在 Codex OAuth 下转发到
+    `chatgpt.com/backend-api/codex/*`；`/backend-api/*` 只 allowlist 账户、模型目录
+    与插件 MCP。`/backend-api` 不是通用 ChatGPT 代理。
+12. **Codex 进程模式**：launcher 使用 `--no-daemon`，配置关闭
+    `daemon_auto_start`、plugins/apps、系统代理与遥测；避免 Seatbelt 下的 daemon
+    探测和 8 秒 WebSocket 回退。
 
 ## 15. 完成定义（Definition of Done）
 
@@ -487,11 +498,11 @@ make release-slo           # release-only：SLO gate（严格）
 - [x] 对应 OpenAPI 端点/事件有真实实现，不再返回 `501`；
 - [x] 对应 AC ID 从 `pending` 变为真实断言并通过严格模式；
 - [x] 全局 Go 测试覆盖率 ≥90%（`make coverage`）；
-- [ ] 错误码、`X-Request-Id`、分页/幂等符合 [08](08-api-contract.md)；
-- [ ] 不新增凭证泄漏面；redaction/路径/token 测试通过；
-- [ ] `make check` 绿；涉及 runtime/Keychain 的改动跑过集成测试；
-- [ ] 文档（本文/12/08/09/10）与 `AGENTS.md` 同步；
-- [ ] PR 描述写清测试命令与安全影响。
+- [x] 错误码、`X-Request-Id`、分页/幂等符合 [08](08-api-contract.md)；
+- [x] 不新增凭证泄漏面；redaction/路径/token 测试通过；
+- [x] `make check` 绿；涉及 runtime/Keychain 的改动跑过集成测试；
+- [x] 文档（本文/12/08/09/10）与 `AGENTS.md` 同步；
+- [x] PR 描述写清测试命令与安全影响。
 
 ## 16. 参考
 

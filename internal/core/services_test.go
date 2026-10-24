@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -454,5 +455,23 @@ func TestInitSupervisorMaps(t *testing.T) {
 	svc.initSupervisorMaps()
 	if _, ok := svc.services["x"]; !ok {
 		t.Fatalf("existing map replaced")
+	}
+}
+
+func TestWaitHealthyIgnoresHostProxy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	svc, _ := newTestService(t)
+	if err := svc.waitHealthy(context.Background(), serviceDef{Health: "/healthz", Port: port}); err != nil {
+		t.Fatalf("waitHealthy used the host proxy: %v", err)
 	}
 }

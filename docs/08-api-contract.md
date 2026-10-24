@@ -510,6 +510,11 @@ POST /oauth/import
 → 201 { "credential_id": "cred_123", "status": "connected" }
 ```
 
+- Codex `auth.json` 的 `tokens.refresh_token` / `id_token` / `account_id` 一并保存在宿主
+  secret store，不通过 API 返回；`expires_at` 取 access token JWT 的 `exp`。
+- 导入时若 access token 已过期仍返回 `201`，状态为 `expired`；网关在过期前用
+  refresh token 刷新，刷新失败返回 `401 reauth_required`，不会把过期 token 发往上游。
+
 ### 3.14 MCP
 
 ```http

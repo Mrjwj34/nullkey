@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/Mrjwj34/nullkey/internal/secret"
 	"github.com/Mrjwj34/nullkey/internal/store/sqlite"
 	"github.com/Mrjwj34/nullkey/internal/terminal"
+	"github.com/Mrjwj34/nullkey/internal/tlsutil"
 	"github.com/Mrjwj34/nullkey/internal/version"
 )
 
@@ -40,6 +42,7 @@ type Kernel struct {
 	gatewayServer  *gateway.Server
 	gatewayHTTP    *http.Server
 	proxyHTTP      *http.Server
+	tls            *tlsutil.Authority
 }
 
 // New validates configuration, opens the store and secrets, wires adapters and
@@ -72,12 +75,19 @@ func New(cfg Config, logger *slog.Logger) (*Kernel, error) {
 		store.Close()
 		return nil, fmt.Errorf("open secret store: %w", err)
 	}
+	cachedSecrets := secret.NewCached(secrets, 5*time.Minute)
+	authority, err := tlsutil.LoadOrCreate(filepath.Join(cfg.Home, "gateway-tls"))
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("load gateway TLS: %w", err)
+	}
 	runtimeCfg := native.Config{
-		Home:        cfg.Home,
-		HostHome:    cfg.HostHome,
-		GatewayAddr: cfg.GatewayListen,
-		ProxyAddr:   cfg.ProxyListen,
-		Logger:      logger,
+		Home:          cfg.Home,
+		HostHome:      cfg.HostHome,
+		GatewayAddr:   cfg.GatewayListen,
+		GatewayTLSURL: "https://" + cfg.GatewayListen,
+		ProxyAddr:     cfg.ProxyListen,
+		Logger:        logger,
 	}
 	nativeRuntime, err := native.New(runtimeCfg)
 	if err != nil {
@@ -92,7 +102,7 @@ func New(cfg Config, logger *slog.Logger) (*Kernel, error) {
 	svc, err := core.New(core.Options{
 		Home:           cfg.Home,
 		Store:          store,
-		Secrets:        secrets,
+		Secrets:        cachedSecrets,
 		Runtime:        nativeRuntime,
 		Terminal:       terminalHub,
 		Events:         bus,
@@ -101,6 +111,8 @@ func New(cfg Config, logger *slog.Logger) (*Kernel, error) {
 		MCP:            &mcpAdapter{proxy: mcpProxy},
 		Logger:         logger,
 		GatewayAddr:    cfg.GatewayListen,
+		GatewayTLSURL:  "https://" + cfg.GatewayListen,
+		GatewayCAPath:  authority.CAPath,
 		ProxyAddr:      cfg.ProxyListen,
 		ControlAddr:    cfg.Listen,
 		HostImportRoot: os.Getenv("NULLKEY_HOST_IMPORT_ROOT"),
@@ -144,6 +156,7 @@ func New(cfg Config, logger *slog.Logger) (*Kernel, error) {
 		store:          store,
 		svc:            svc,
 		gatewayServer:  gw,
+		tls:            authority,
 		gatewayHTTP: &http.Server{
 			Handler:           gw.Handler(),
 			ReadHeaderTimeout: 10 * time.Second,
@@ -212,6 +225,14 @@ func (k *Kernel) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Warm the secret cache in the background. The first Security.framework
+	// read can take several seconds; concurrent Codex bootstrap requests should
+	// wait for one read, not each start their own.
+	go func() {
+		warmCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		k.svc.WarmCredentials(warmCtx)
+	}()
 	controlListener, err := net.Listen("tcp", k.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen control on %s: %w", k.cfg.Listen, err)
@@ -238,7 +259,7 @@ func (k *Kernel) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 3)
 	go func() { errCh <- server.Serve(controlListener) }()
-	go func() { errCh <- k.gatewayHTTP.Serve(gatewayListener) }()
+	go func() { errCh <- k.gatewayHTTP.Serve(k.tls.MuxListener(gatewayListener)) }()
 	go func() { errCh <- k.proxyHTTP.Serve(proxyListener) }()
 
 	k.log.Info("nullkeyd_started",

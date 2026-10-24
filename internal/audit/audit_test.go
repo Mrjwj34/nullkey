@@ -288,3 +288,18 @@ func TestEventIDAndNow(t *testing.T) {
 		t.Fatalf("now() location = %v, want UTC", ts.Location())
 	}
 }
+
+func TestRecordSurvivesCancelledContext(t *testing.T) {
+	store := newStore(t)
+	sink := New(store, discardLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sink.Record(ctx, "cancelled.request", nil, map[string]any{"ok": true})
+	events, _, err := sink.List(context.Background(), 10, "", "cancelled.request")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+}

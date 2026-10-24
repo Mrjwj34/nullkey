@@ -10,11 +10,12 @@ import (
 
 // ProfileOptions describes the Seatbelt policy for one sandbox.
 type ProfileOptions struct {
-	Workspace string
-	State     string
-	Cache     string
-	HostHome  string
-	Mode      domain.NetworkMode
+	Workspace   string
+	State       string
+	Cache       string
+	HostHome    string
+	HarnessRoot string
+	Mode        domain.NetworkMode
 }
 
 // BuildProfile renders a Seatbelt profile. The policy is deny-by-default with
@@ -53,7 +54,32 @@ func BuildProfile(opts ProfileOptions) string {
 	}
 	b.WriteString(")\n")
 
-	allowed := []string{opts.Workspace, opts.State, opts.Cache}
+	// Node resolves the real path of an npm-installed harness by lstat-ing every
+	// ancestor, including /Users. Allow metadata for those ancestors without
+	// granting read access to their contents. The harness package itself is
+	// allowed below.
+	if opts.HarnessRoot != "" {
+		// Only the ancestors between the harness package and the host home's
+		// parent are needed. Do not allow metadata for the filesystem root or
+		// unrelated trees.
+		stop := ""
+		if opts.HostHome != "" {
+			stop = filepath.Dir(opts.HostHome)
+		}
+		for _, dir := range ancestors(opts.HarnessRoot) {
+			if dir == "/" {
+				continue
+			}
+			b.WriteString("(allow file-read-metadata (subpath ")
+			b.WriteString(quote(dir))
+			b.WriteString("))\n")
+			if stop != "" && dir == stop {
+				break
+			}
+		}
+	}
+
+	allowed := []string{opts.Workspace, opts.State, opts.Cache, opts.HarnessRoot}
 	for _, path := range allowed {
 		if path == "" {
 			continue
@@ -84,6 +110,20 @@ func BuildProfile(opts ProfileOptions) string {
 	}
 	b.WriteString("(allow system-socket)\n")
 	return b.String()
+}
+
+func ancestors(path string) []string {
+	var out []string
+	dir := filepath.Clean(path)
+	for {
+		out = append(out, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return out
 }
 
 func canonicalPath(path string) string {

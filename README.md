@@ -193,11 +193,17 @@ make release-check    # 产品能力 + SLO
 
 ```bash
 NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
+NULLKEY_SECRET_BACKEND=file \
   go run ./cmd/nullkeyd --listen 127.0.0.1:49152
 curl -s http://127.0.0.1:49152/api/v1/health
 ```
 
 未设置 `NULLKEY_DAEMON_TOKEN` 时，daemon 生成/复用 `<NULLKEY_HOME>/daemon-token`（0600）。
+
+开发/CI 建议显式设置 `NULLKEY_SECRET_BACKEND=file`。未签名的本地 daemon 重建后，
+macOS 会把 Keychain 条目的 ACL 视为不同的调用方，可能弹出一次系统授权；
+拒绝后 daemon 会对该凭证做 60 秒负缓存并失败关闭，不会让每个并发请求重复弹窗。
+生产签名构建使用 Keychain；验收测试始终使用 file fallback。
 
 ## License
 

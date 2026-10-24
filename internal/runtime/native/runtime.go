@@ -38,8 +38,9 @@ type Config struct {
 	// HostHome is the real user home, denied inside the sandbox.
 	HostHome string
 	// GatewayAddr and ProxyAddr are loopback addresses injected into the child.
-	GatewayAddr string
-	ProxyAddr   string
+	GatewayAddr   string
+	GatewayTLSURL string
+	ProxyAddr     string
 	// Logger is used for redacted lifecycle logs.
 	Logger *slog.Logger
 	// ReadyTimeout bounds sandbox startup. Defaults to 8s.
@@ -50,6 +51,7 @@ type Config struct {
 type Spec struct {
 	SandboxID     string
 	HarnessID     string
+	HarnessRoot   string
 	WorkspacePath string
 	StatePath     string
 	CachePath     string
@@ -153,11 +155,12 @@ func (r *Runtime) Start(ctx context.Context, spec Spec) (*Process, error) {
 	}
 
 	profile := BuildProfile(ProfileOptions{
-		Workspace: spec.WorkspacePath,
-		State:     spec.StatePath,
-		Cache:     spec.CachePath,
-		HostHome:  r.cfg.HostHome,
-		Mode:      spec.NetworkMode,
+		Workspace:   spec.WorkspacePath,
+		State:       spec.StatePath,
+		Cache:       spec.CachePath,
+		HostHome:    r.cfg.HostHome,
+		HarnessRoot: spec.HarnessRoot,
+		Mode:        spec.NetworkMode,
 	})
 
 	args := []string{"__sandbox_exec", "--cwd", spec.WorkspacePath, "--"}
@@ -246,6 +249,7 @@ func (r *Runtime) Start(ctx context.Context, spec Spec) (*Process, error) {
 		p.mu.Lock()
 		p.code = cmd.ProcessState.ExitCode()
 		p.mu.Unlock()
+		r.log.Info("sandbox_process_exited", "sandbox_id", spec.SandboxID, "harness_id", spec.HarnessID, "pid", p.PID, "exit_code", p.code)
 		p.once.Do(func() { close(p.done) })
 	}()
 
@@ -273,6 +277,7 @@ func (r *Runtime) sandboxEnv(spec Spec, stateHome, tmpDir string) []string {
 		"LC_ALL=en_US.UTF-8",
 		"NULLKEY_TOKEN=" + spec.Token,
 		"NULLKEY_GATEWAY=http://" + r.cfg.GatewayAddr,
+		"NULLKEY_GATEWAY_TLS=" + r.cfg.GatewayTLSURL,
 		"NULLKEY_PROXY=http://" + r.cfg.ProxyAddr,
 		"NULLKEY_SANDBOX_ID=" + spec.SandboxID,
 		"HTTP_PROXY=http://" + r.cfg.ProxyAddr,
@@ -284,6 +289,11 @@ func (r *Runtime) sandboxEnv(spec Spec, stateHome, tmpDir string) []string {
 		"NEXT_TELEMETRY_DISABLED=1",
 		"CODEX_DISABLE_TELEMETRY=1",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+	}
+	if spec.HarnessID == "codex" {
+		// Codex's built-in plugin MCP client only adds a bearer token when this
+		// variable is set. It is the per-sandbox token, never an OpenAI token.
+		env = append(env, "CODEX_CONNECTORS_TOKEN="+spec.Token)
 	}
 	env = append(env, spec.ExtraEnv...)
 	return env
