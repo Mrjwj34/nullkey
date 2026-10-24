@@ -16,30 +16,35 @@ void main() =>
 
 /// Connects to nullkeyd using `NULLKEY_DAEMON_URL`/`NULLKEY_DAEMON_TOKEN`
 /// when given (`--dart-define` or environment), otherwise the token the
-/// daemon wrote to `<NULLKEY_HOME>/daemon-token`. With no token at all the app
-/// runs on Core Mock, paced like a real daemon so launch stages, installs and
-/// browser sign-in stay visible.
+/// daemon wrote to `<NULLKEY_HOME>/daemon-token`. A missing token keeps the
+/// app disconnected until the daemon starts. Demos must be selected explicitly.
 NullkeyBackend _backend() {
   String? setting(String name, String defined) {
     final value = defined.isNotEmpty ? defined : Platform.environment[name];
     return value == null || value.trim().isEmpty ? null : value.trim();
   }
 
+  if (setting('NULLKEY_DEMO', const String.fromEnvironment('NULLKEY_DEMO')) ==
+      '1') {
+    return CoreMockBackend(simulatedLatency: const Duration(milliseconds: 450));
+  }
+  final explicitToken = setting(
+    'NULLKEY_DAEMON_TOKEN',
+    const String.fromEnvironment('NULLKEY_DAEMON_TOKEN'),
+  );
   final connection = resolveDaemonConnection(
     url: setting(
       'NULLKEY_DAEMON_URL',
       const String.fromEnvironment('NULLKEY_DAEMON_URL'),
     ),
-    token: setting(
-      'NULLKEY_DAEMON_TOKEN',
-      const String.fromEnvironment('NULLKEY_DAEMON_TOKEN'),
-    ),
+    token: explicitToken,
     fileToken: readDaemonToken(),
   );
-  if (connection == null) {
-    return CoreMockBackend(simulatedLatency: const Duration(milliseconds: 450));
-  }
-  return DaemonBackend(baseUrl: connection.baseUrl, token: connection.token);
+  return DaemonBackend(
+    baseUrl: connection?.baseUrl ?? Uri.parse(defaultDaemonUrl),
+    token: connection?.token ?? '',
+    tokenLoader: explicitToken == null ? readDaemonToken : null,
+  );
 }
 
 class NullkeyApp extends StatefulWidget {

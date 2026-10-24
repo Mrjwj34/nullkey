@@ -44,6 +44,7 @@ class DaemonBackend implements NullkeyBackend {
 
   final Uri _api;
   final String _token;
+  final String? Function()? _tokenLoader;
   final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 3);
 
@@ -97,7 +98,7 @@ class DaemonBackend implements NullkeyBackend {
 
   /// [baseUrl] is the control API's origin, such as
   /// `http://127.0.0.1:49152`; `/api/v1` is added when missing.
-  DaemonBackend({required Uri baseUrl, required this._token})
+  DaemonBackend({required Uri baseUrl, required this._token, this._tokenLoader})
     : _api = _apiRoot(baseUrl) {
     _capabilities = _mapCapabilities();
     unawaited(_runEvents());
@@ -173,6 +174,19 @@ class DaemonBackend implements NullkeyBackend {
 
   static String _seg(String id) => Uri.encodeComponent(id);
 
+  String _authToken() {
+    final token =
+        (_tokenLoader == null ? _token : _tokenLoader())?.trim() ?? '';
+    if (token.isNotEmpty) return token;
+    const message = '尚未连接 nullkeyd。请先启动 nullkeyd；应用会自动重试连接。';
+    _setProblem(message);
+    throw const NullkeyApiException(
+      statusCode: 0,
+      code: 'unreachable',
+      message: message,
+    );
+  }
+
   Future<Object?> _call(
     String method,
     String path, {
@@ -183,11 +197,12 @@ class DaemonBackend implements NullkeyBackend {
     final HttpClientResponse response;
     final String text;
     try {
+      final token = _authToken();
       final request = await _http
           .openUrl(method, _uri(path, query))
           .timeout(_requestTimeout);
       request.headers
-        ..set(HttpHeaders.authorizationHeader, 'Bearer $_token')
+        ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
         ..set(HttpHeaders.acceptHeader, 'application/json');
       if (body != null) {
         final bytes = utf8.encode(jsonEncode(body));
@@ -304,11 +319,12 @@ class DaemonBackend implements NullkeyBackend {
     var backoff = const Duration(milliseconds: 500);
     while (!_disposed) {
       try {
+        final token = _authToken();
         final request = await _eventsHttp
             .getUrl(_uri('/events'))
             .timeout(_requestTimeout);
         request.headers
-          ..set(HttpHeaders.authorizationHeader, 'Bearer $_token')
+          ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
           ..set(HttpHeaders.acceptHeader, 'text/event-stream');
         final response = await request.close().timeout(_requestTimeout);
         if (response.statusCode != 200) {
@@ -909,10 +925,14 @@ class DaemonBackend implements NullkeyBackend {
     if (active != null && _jobs[active]?.status.isActive == true) {
       return _jobs[active]!;
     }
-    final raw = await _object(
+    final accepted = await _object(
       'POST',
       '/harnesses/${_seg(_harnessId(kind))}/install',
       body: const {},
+    );
+    final raw = await _object(
+      'GET',
+      '/jobs/${_seg(accepted['job_id'] as String)}',
     );
     final now = DateTime.now().toUtc();
     final job = _mapJob(
@@ -958,7 +978,11 @@ class DaemonBackend implements NullkeyBackend {
         _ => status.label,
       },
       targetId: targetId,
-      error: error == null ? null : '没能完成安装（$error）',
+      error: error == null
+          ? null
+          : error.startsWith('harness executable is unavailable')
+          ? '请先在宿主机安装 Agent，并让 nullkeyd 的 PATH 能找到它，再重新检查。'
+          : '没能完成安装（$error）',
       createdAt: createdAt,
       updatedAt: DateTime.now().toUtc(),
     );

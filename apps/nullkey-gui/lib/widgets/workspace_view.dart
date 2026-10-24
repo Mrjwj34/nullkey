@@ -141,8 +141,12 @@ class WorkspaceView extends StatelessWidget {
         key: const Key('reauth-alert'),
         tone: Tone.warning,
         icon: FLucideIcons.keyRound,
-        title: '${providerAccountName(provider)}登录已失效',
-        body: '重新连接后可继续，文件和会话不受影响。',
+        title: c.credentialFor(provider) == null
+            ? '尚未连接${providerAccountName(provider)}'
+            : '${providerAccountName(provider)}登录已失效',
+        body: c.credentialFor(provider) == null
+            ? '连接账号或添加 API Key 后即可使用这个 Agent。'
+            : '重新连接后可继续，文件和会话不受影响。',
         actions: [
           FButton(
             key: const Key('reauth-reconnect-button'),
@@ -152,9 +156,9 @@ class WorkspaceView extends StatelessWidget {
               context,
               c,
               provider: provider,
-              reconnect: true,
+              reconnect: c.credentialFor(provider) != null,
             ),
-            child: const Text('重新连接…'),
+            child: Text(c.credentialFor(provider) == null ? '连接…' : '重新连接…'),
           ),
         ],
       ),

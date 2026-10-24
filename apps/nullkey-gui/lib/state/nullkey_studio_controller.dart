@@ -178,7 +178,13 @@ class NullkeyStudioController extends ChangeNotifier {
     bool initiallyUnlocked = true,
   }) : api = api ?? CoreMockBackend(),
        _ownsApi = api == null,
-       passkey = passkey ?? PasskeySecurityService(),
+       passkey =
+           passkey ??
+           PasskeySecurityService(
+             useNativeBridge:
+                 api?.capabilities.connectionMode ==
+                 DaemonConnectionMode.liveDaemon,
+           ),
        _openUrl = openUrl ?? launchUrl,
        _unlocked = initiallyUnlocked,
        _loading = api != null && api is! CoreMockBackend {

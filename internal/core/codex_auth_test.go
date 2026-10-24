@@ -246,7 +246,6 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	for _, want := range []string{
 		`model_provider = "nullkey"`,
 		`base_url = "https://127.0.0.1:49153/openai"`,
-		`model_catalog_url = "https://127.0.0.1:49153/backend-api/codex/models"`,
 		`chatgpt_base_url = "https://127.0.0.1:49153/backend-api"`,
 		`requires_openai_auth = false`,
 		`daemon_auto_start = false`,
@@ -263,6 +262,9 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	}
 	if strings.Contains(text, "sk-") {
 		t.Fatalf("config contains a credential-looking value:\n%s", text)
+	}
+	if strings.Contains(text, "model_catalog_url") {
+		t.Fatal("without ChatGPT OAuth, the model catalog must not require a ChatGPT login")
 	}
 	info, err := os.Stat(configPath)
 	if err != nil || info.Mode().Perm() != 0o600 {
@@ -287,6 +289,40 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(other, "home", ".codex", "config.toml")); !os.IsNotExist(err) {
 		t.Fatalf("codex config created for shell: %v", err)
 	}
+}
+
+func TestCodexCatalogMatchesSelectedCredential(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	cred := domain.Credential{
+		ID: "cred_chatgpt", ProviderID: "codex", Label: "test",
+		AuthType: domain.AuthOAuth, Status: domain.CredentialConnected,
+		KeychainAccount: "cred_chatgpt", CreatedAt: svc.now(),
+	}
+	if err := svc.Store.CreateCredential(ctx, cred); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	check := func(wantCatalog bool) {
+		t.Helper()
+		if _, err := svc.writeGeneratedConfig(state, "sbx", domain.NetworkFiltered, "codex", "/tmp/workspace"); err != nil {
+			t.Fatal(err)
+		}
+		config, err := os.ReadFile(filepath.Join(state, "home", ".codex", "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(config), "model_catalog_url") != wantCatalog {
+			t.Fatalf("ChatGPT catalog enabled = %v, want %v", !wantCatalog, wantCatalog)
+		}
+	}
+	check(true)
+	if _, err := svc.CreateCredential(ctx, CreateCredentialRequest{
+		ProviderID: "openai", Label: "API key", AuthType: "api_key", Value: "sk-test-fake",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
 }
 
 func TestModelUpstreamCodexAPIKeyUsesOpenAI(t *testing.T) {

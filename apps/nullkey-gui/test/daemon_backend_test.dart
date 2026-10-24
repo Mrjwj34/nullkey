@@ -73,6 +73,18 @@ class _FakeDaemon {
         },
       });
     }
+    if (request.method == 'POST' && path == '/harnesses/codex/install') {
+      return _json(response, 202, {'job_id': 'job_install'});
+    }
+    if (path == '/jobs/job_install') {
+      return _json(response, 200, {
+        'id': 'job_install',
+        'type': 'harness_install',
+        'status': 'succeeded',
+        'progress': 1.0,
+        'message': 'installed',
+      });
+    }
     return switch (path) {
       '/capabilities' => _json(response, 200, {}),
       '/health' => _json(response, 200, {'status': 'ok', 'version': 'test'}),
@@ -128,6 +140,44 @@ void main() {
       DaemonConnectionMode.liveDaemon,
     );
   });
+
+  test('install follows the accepted job_id to the job resource', () async {
+    final backend = connect();
+    await backend.loaded;
+    final job = await backend.startHarnessInstall(HarnessKind.codex);
+    expect(job.id, 'job_install');
+    expect(job.status, JobStatus.succeeded);
+    expect(backend.getJob(job.id), isNotNull);
+  });
+
+  test(
+    'starting before the daemon waits and discovers its token later',
+    () async {
+      String? token;
+      final backend = DaemonBackend(
+        baseUrl: daemon.url,
+        token: '',
+        tokenLoader: () => token,
+      );
+      addTearDown(backend.dispose);
+      await backend.loaded;
+      expect(backend.connectionProblem, contains('请先启动 nullkeyd'));
+      expect(backend.listWorkspaces(), isEmpty);
+      expect(
+        backend.capabilities.connectionMode,
+        DaemonConnectionMode.liveDaemon,
+      );
+      daemon.collections['/workspaces'] = [_workspace('ws_real', 'real')];
+      final connected = backend.changes.firstWhere(
+        (_) =>
+            backend.connectionProblem == null &&
+            backend.listWorkspaces().isNotEmpty,
+      );
+      token = _FakeDaemon.token;
+      await connected.timeout(const Duration(seconds: 5));
+      expect(backend.listWorkspaces().single.id, 'ws_real');
+    },
+  );
 
   test('a rejected token is reported as a connection problem', () async {
     final backend = connect(token: 'wrong-token-0123456789');

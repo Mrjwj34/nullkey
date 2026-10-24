@@ -133,7 +133,11 @@ func TestAC_API_009_SSEEvents(t *testing.T) {
 }
 
 func TestAC_API_010_JobCancel(t *testing.T) {
-	d := startDaemon(t)
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := startDaemonWithEnv(t, map[string]string{"PATH": binDir})
 	resp, raw := d.doAuthed(t, http.MethodPost, "/harnesses/codex/install", map[string]any{"version": "test"})
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("install status = %d; body=%s", resp.StatusCode, raw)

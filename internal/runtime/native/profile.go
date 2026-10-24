@@ -10,12 +10,13 @@ import (
 
 // ProfileOptions describes the Seatbelt policy for one sandbox.
 type ProfileOptions struct {
-	Workspace   string
-	State       string
-	Cache       string
-	HostHome    string
-	HarnessRoot string
-	Mode        domain.NetworkMode
+	Workspace         string
+	WorkspaceReadOnly bool
+	State             string
+	Cache             string
+	HostHome          string
+	HarnessRoot       string
+	Mode              domain.NetworkMode
 }
 
 // BuildProfile renders a Seatbelt profile. The policy is deny-by-default with
@@ -127,6 +128,26 @@ func BuildProfile(opts ProfileOptions) string {
 		}
 	}
 	b.WriteString("(allow file-write* (subpath \"/dev\"))\n")
+
+	// Apply these restrictions after every write allowance, including the
+	// shared temporary directory rule. The real path must be protected too.
+	readOnly := []string{opts.HarnessRoot}
+	if opts.WorkspaceReadOnly {
+		readOnly = append(readOnly, opts.Workspace)
+	}
+	for _, path := range readOnly {
+		if path == "" {
+			continue
+		}
+		b.WriteString("(deny file-write* (subpath ")
+		b.WriteString(quote(path))
+		b.WriteString("))\n")
+		if resolved := canonicalPath(path); resolved != path {
+			b.WriteString("(deny file-write* (subpath ")
+			b.WriteString(quote(resolved))
+			b.WriteString("))\n")
+		}
+	}
 
 	b.WriteString("(deny network*)\n")
 	b.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n")

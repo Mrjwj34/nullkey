@@ -18,21 +18,26 @@ void main() {
     expect(connection.token, 'from-file');
   });
 
-  test('url without a token stays on mock', () {
-    expect(resolveDaemonConnection(url: defaultDaemonUrl), isNull);
+  test('url without a token waits for a daemon', () {
+    expect(resolveDaemonConnection(url: defaultDaemonUrl)!.token, isEmpty);
   });
 
   test('blank values are ignored', () {
-    expect(resolveDaemonConnection(token: '   ', fileToken: '\n'), isNull);
+    expect(
+      resolveDaemonConnection(token: '   ', fileToken: '\n')!.token,
+      isEmpty,
+    );
   });
 
-  test('malformed url stays on mock instead of guessing', () {
+  test('malformed url is rejected', () {
     expect(resolveDaemonConnection(url: 'not a url', token: 'tok'), isNull);
   });
 
   test('token path follows NULLKEY_HOME when set', () {
     expect(
-      daemonTokenPath(environment: {'NULLKEY_HOME': '/tmp/nk', 'HOME': '/Users/x'}),
+      daemonTokenPath(
+        environment: {'NULLKEY_HOME': '/tmp/nk', 'HOME': '/Users/x'},
+      ),
       '/tmp/nk/daemon-token',
     );
   });
@@ -49,6 +54,9 @@ void main() {
   });
 
   test('missing token file reads as null', () {
-    expect(readDaemonToken(environment: {'NULLKEY_HOME': '/tmp/nk-does-not-exist'}), isNull);
+    expect(
+      readDaemonToken(environment: {'NULLKEY_HOME': '/tmp/nk-does-not-exist'}),
+      isNull,
+    );
   });
 }

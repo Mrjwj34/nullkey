@@ -4,7 +4,7 @@
 >
 > A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
-**Status:** design phase · Go kernel skeleton · API draft (freeze after interaction acceptance) · macOS Apple Silicon · 3-day MVP
+**Status:** v0.1.0 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
 
 ## 为什么
 
@@ -215,7 +215,9 @@ macOS 端 Flutter + Forui 工程在 [`apps/nullkey-gui`](apps/nullkey-gui)，通
 2. daemon 自己写的 `<NULLKEY_HOME>/daemon-token`（默认
    `~/Library/Application Support/Nullkey/daemon-token`），地址取
    `http://127.0.0.1:49152`；
-3. 两者都没有就跑内置的 Core Mock（带延迟，便于看启动/安装/登录的中间态）。
+3. 两者都没有时显示未连接，等待 daemon 写出 token 后自动重试；不会写入模拟数据。
+
+演示模式须显式设置 `NULLKEY_DEMO=1`（环境变量或 `--dart-define`）。
 
 也就是说：不带 `NULLKEY_DAEMON_TOKEN` 启动 daemon，让它写出 token 文件，GUI 打开即连；
 要连非默认端口或别的 token 时再显式传。为了读这个文件，发布构建不开 app sandbox
@@ -253,7 +255,15 @@ open /Applications/Nullkey.app
 ```
 
 先启动 daemon（不设 `NULLKEY_DAEMON_TOKEN`，让它写 token 文件），再打开 GUI，
-界面就连到本机 daemon；只打开 GUI 则是 Core Mock 演示态。
+界面就连到本机 daemon；先打开 GUI 时会等待连接。
+
+```bash
+./nullkeyd-darwin-arm64/nullkeyd         # 保持这个进程运行
+```
+
+Codex CLI 需要先在宿主机安装；在启动 daemon 的同一个终端确认 `codex --version`
+可运行，再在 GUI 点“检查安装”。当前安装接口只验证本机程序并登记适配器，不下载或
+更新 CLI；缺少可执行程序时任务失败，不会显示“已安装”。Shell 无需额外安装。
 ## License
 
 TBD。

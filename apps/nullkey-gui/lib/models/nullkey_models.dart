@@ -201,8 +201,8 @@ class PasskeyRegistration {
         'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7NullkeySecureEnclaveP256PubKey=',
     authenticatorAttachment:
         (map['authenticatorAttachment'] as String?) ?? 'platform',
-    backedBySecureEnclave: (map['backedBySecureEnclave'] as bool?) ?? true,
-    authMethod: (map['authMethod'] as String?) ?? 'Touch ID (Secure Enclave)',
+    backedBySecureEnclave: (map['backedBySecureEnclave'] as bool?) ?? false,
+    authMethod: (map['authMethod'] as String?) ?? 'macOS 系统验证',
     createdAt:
         (map['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
     signCount: (map['signCount'] as num?)?.toInt() ?? 1,
