@@ -322,58 +322,11 @@ func (s *Service) RefreshOAuth(ctx context.Context, credentialID string) (time.T
 	if cred.AuthType != domain.AuthOAuth {
 		return time.Time{}, Invalid("credential is not an OAuth connection")
 	}
-	raw, err := s.Secrets.Get(ctx, cred.KeychainAccount)
-	if err != nil {
-		return time.Time{}, E(http.StatusUnauthorized, "reauth_required", "credential is unavailable; re-authenticate")
-	}
-	_, refresh, _ := decodeSecret(raw)
-	if refresh == "" {
-		return time.Time{}, E(http.StatusUnauthorized, "reauth_required", "OAuth connection has no refresh token")
-	}
-	cfg := s.oauthConfig(cred.ProviderID)
-	if !cfg.available() {
-		return time.Time{}, E(http.StatusBadRequest, "oauth_unavailable", "OAuth is not configured for this provider")
-	}
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refresh)
-	form.Set("client_id", cfg.clientID)
-	if cfg.clientSecret != "" {
-		form.Set("client_secret", cfg.clientSecret)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.tokenURL, strings.NewReader(form.Encode()))
+	refreshed, err := s.refreshOAuthBundle(ctx, cred, true)
 	if err != nil {
 		return time.Time{}, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := s.HTTP.Do(req)
-	if err != nil {
-		return time.Time{}, E(http.StatusBadGateway, "oauth_failed", "token refresh failed")
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var payload struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 || json.Unmarshal(body, &payload) != nil || payload.AccessToken == "" {
-		return time.Time{}, E(http.StatusBadGateway, "oauth_failed", "token refresh failed")
-	}
-	if payload.RefreshToken == "" {
-		payload.RefreshToken = refresh
-	}
-	expires := s.now().Add(time.Duration(payload.ExpiresIn) * time.Second)
-	if payload.ExpiresIn <= 0 {
-		expires = s.now().Add(time.Hour)
-	}
-	if err := s.Secrets.Put(ctx, cred.KeychainAccount, encodeOAuthSecret(payload.AccessToken, payload.RefreshToken, expires)); err != nil {
-		return time.Time{}, Wrap(http.StatusInternalServerError, "keychain_unavailable", "could not update OAuth credential", err)
-	}
-	_ = s.Store.SetCredentialStatus(ctx, cred.ID, domain.CredentialConnected, &expires)
-	s.Audit.Record(ctx, "oauth.refreshed", nil, map[string]any{"credential_id": cred.ID, "provider_id": cred.ProviderID})
-	return expires, nil
+	return refreshed.ExpiresAt, nil
 }
 
 // ImportableLogin describes a host login that can be imported.
@@ -414,13 +367,8 @@ func (s *Service) hostLoginExpiry(providerID, path string) *time.Time {
 	if err != nil {
 		return nil
 	}
-	var payload struct {
-		ExpiresAt string `json:"expires_at"`
-	}
-	if json.Unmarshal(raw, &payload) == nil && payload.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, payload.ExpiresAt); err == nil {
-			return &t
-		}
+	if login, ok := parseCodexHostLogin(raw); ok {
+		return login.ExpiresAt
 	}
 	return nil
 }
@@ -464,8 +412,18 @@ func (s *Service) ImportHostLogin(ctx context.Context, providerID, source, label
 	}
 	cred.KeychainAccount = cred.ID
 	secretValue := []byte(token)
-	if authType == domain.AuthOAuth && expires != nil {
-		secretValue = encodeOAuthSecret(token, "", *expires)
+	if authType == domain.AuthOAuth {
+		bundle := oauthSecret{AccessToken: token, ExpiresAt: derefTime(expires)}
+		if providerID == "codex" {
+			if login, ok := parseCodexHostLogin(raw); ok {
+				bundle.AccessToken = login.AccessToken
+				bundle.RefreshToken = login.RefreshToken
+				bundle.IDToken = login.IDToken
+				bundle.AccountID = login.AccountID
+				bundle.ExpiresAt = derefTime(login.ExpiresAt)
+			}
+		}
+		secretValue = encodeOAuthBundle(bundle)
 	}
 	if err := s.Secrets.Put(ctx, cred.KeychainAccount, secretValue); err != nil {
 		return domain.ImportResult{}, Wrap(http.StatusInternalServerError, "keychain_unavailable", "could not store imported credential", err)
@@ -490,34 +448,16 @@ func parseHostLogin(providerID string, raw []byte) (string, domain.AuthType) {
 }
 
 func parseHostLoginDetails(providerID string, raw []byte) (string, domain.AuthType, *time.Time) {
-	parseExpiry := func(value string) *time.Time {
-		if value == "" {
-			return nil
-		}
-		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-			return &parsed
-		}
-		return nil
-	}
 	switch providerID {
 	case "codex":
+		if login, ok := parseCodexHostLogin(raw); ok {
+			return login.AccessToken, domain.AuthOAuth, login.ExpiresAt
+		}
 		var payload struct {
-			Tokens struct {
-				AccessToken string `json:"access_token"`
-				ExpiresAt   string `json:"expires_at"`
-			} `json:"tokens"`
-			ExpiresAt    string `json:"expires_at"`
 			OpenAIAPIKey string `json:"OPENAI_API_KEY"`
 			APIKey       string `json:"api_key"`
 		}
 		if json.Unmarshal(raw, &payload) == nil {
-			if payload.Tokens.AccessToken != "" {
-				expiry := parseExpiry(payload.Tokens.ExpiresAt)
-				if expiry == nil {
-					expiry = parseExpiry(payload.ExpiresAt)
-				}
-				return payload.Tokens.AccessToken, domain.AuthOAuth, expiry
-			}
 			if payload.OpenAIAPIKey != "" {
 				return payload.OpenAIAPIKey, domain.AuthAPIKey, nil
 			}

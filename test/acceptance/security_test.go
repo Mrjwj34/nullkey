@@ -33,11 +33,12 @@ func TestAC_SEC_001_SandboxEnv(t *testing.T) {
 	allowed := map[string]bool{
 		"HOME": true, "TMPDIR": true, "PATH": true, "SHELL": true, "TERM": true,
 		"LANG": true, "LC_ALL": true, "PWD": true, "SHLVL": true, "_": true,
-		"NULLKEY_TOKEN": true, "NULLKEY_GATEWAY": true, "NULLKEY_PROXY": true,
+		"NULLKEY_TOKEN": true, "NULLKEY_GATEWAY": true, "NULLKEY_GATEWAY_TLS": true, "NULLKEY_PROXY": true,
 		"NULLKEY_SANDBOX_ID": true,
 		"HTTP_PROXY":         true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
 		"DO_NOT_TRACK": true, "DISABLE_TELEMETRY": true, "NEXT_TELEMETRY_DISABLED": true,
 		"CODEX_DISABLE_TELEMETRY": true, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": true,
+		"CODEX_CA_CERTIFICATE": true, "CODEX_HOME": true, "CODEX_CONNECTORS_TOKEN": true,
 	}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)

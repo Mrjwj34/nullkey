@@ -78,8 +78,8 @@ func (s *Service) runInstall(ctx context.Context, jobID, harnessID, version stri
 	update(domain.JobRunning, 0.1, "validating harness", nil)
 	select {
 	case <-ctx.Done():
-		update(domain.JobCancelled, 0, "cancelled", nil)
 		s.Audit.Record(context.Background(), "job.cancelled", nil, map[string]any{"job_id": jobID})
+		update(domain.JobCancelled, 0, "cancelled", nil)
 		return
 	case <-time.After(150 * time.Millisecond):
 	}
@@ -93,8 +93,8 @@ func (s *Service) runInstall(ctx context.Context, jobID, harnessID, version stri
 	select {
 	case <-ctx.Done():
 		_ = os.RemoveAll(staging)
-		update(domain.JobCancelled, 0, "cancelled", nil)
 		s.Audit.Record(context.Background(), "job.cancelled", nil, map[string]any{"job_id": jobID})
+		update(domain.JobCancelled, 0, "cancelled", nil)
 		return
 	case <-time.After(250 * time.Millisecond):
 	}

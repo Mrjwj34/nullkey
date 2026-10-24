@@ -77,11 +77,16 @@ func (h *Hub) Open(sandboxID string, source Source) string {
 		exited:     make(chan struct{}),
 	}
 	h.mu.Lock()
-	if old := h.sessions[sandboxID]; old != nil {
-		old.shutdown()
-	}
+	old := h.sessions[sandboxID]
+	// Install the new session before shutting down the old one, and never call
+	// shutdown while holding h.mu: finish() also takes h.mu, so doing both would
+	// deadlock when the old PTY exits concurrently (Open waits exitOnce, finish
+	// waits h.mu).
 	h.sessions[sandboxID] = s
 	h.mu.Unlock()
+	if old != nil {
+		old.shutdown()
+	}
 	go s.pump()
 	go s.wait()
 	return terminalID

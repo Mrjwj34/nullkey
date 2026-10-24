@@ -155,15 +155,14 @@ func (s *Service) TestCredential(ctx context.Context, id string) (bool, *int64, 
 // CredentialSecret returns the raw secret for a credential. Callers must never
 // log or return it.
 func (s *Service) CredentialSecret(ctx context.Context, cred domain.Credential) (string, error) {
-	raw, err := s.Secrets.Get(ctx, cred.KeychainAccount)
-	if err != nil || len(raw) == 0 {
+	bundle, err := s.credentialBundleFor(ctx, cred)
+	if err != nil {
+		return "", err
+	}
+	if bundle.AccessToken == "" {
 		return "", E(http.StatusUnauthorized, "reauth_required", "credential is unavailable; re-authenticate")
 	}
-	access, _, _ := decodeSecret(raw)
-	if access == "" {
-		return "", E(http.StatusUnauthorized, "reauth_required", "credential is unavailable; re-authenticate")
-	}
-	return access, nil
+	return bundle.AccessToken, nil
 }
 
 // credentialForProvider selects a connected credential and marks it used.
@@ -180,4 +179,20 @@ func (s *Service) credentialForProvider(ctx context.Context, providerID string) 
 	}
 	_ = s.Store.TouchCredential(ctx, cred.ID)
 	return cred, nil
+}
+
+// WarmCredentials reads each stored credential once so the secret cache is hot
+// before the first sandbox request arrives. Errors are intentionally ignored:
+// a missing or locked credential is handled when it is actually used.
+func (s *Service) WarmCredentials(ctx context.Context) {
+	items, _, err := s.Store.ListCredentials(ctx, 200, "")
+	if err != nil {
+		return
+	}
+	for _, cred := range items {
+		if ctx.Err() != nil {
+			return
+		}
+		_, _ = s.Secrets.Get(ctx, cred.KeychainAccount)
+	}
 }

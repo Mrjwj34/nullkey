@@ -321,7 +321,7 @@ func TestScanGeneratedRuntime(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 	sb, _, st := runningSandbox(t, svc, "shell")
-	svc.writeGeneratedConfig(st.Path, sb.ID, domain.NetworkFiltered)
+	_, _ = svc.writeGeneratedConfig(st.Path, sb.ID, domain.NetworkFiltered, "")
 
 	res, err := svc.Scan(ctx, sb.ID)
 	if err != nil {
@@ -401,7 +401,7 @@ func TestScanErrorPaths(t *testing.T) {
 func TestWriteGeneratedConfig(t *testing.T) {
 	svc, _ := newTestService(t)
 	statePath := t.TempDir()
-	svc.writeGeneratedConfig(statePath, "sbx_test", domain.NetworkOpen)
+	_, _ = svc.writeGeneratedConfig(statePath, "sbx_test", domain.NetworkOpen, "")
 	raw, err := os.ReadFile(filepath.Join(statePath, "nullkey", "config.json"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -425,7 +425,7 @@ func TestWriteGeneratedConfig(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write blocker: %v", err)
 	}
-	svc.writeGeneratedConfig(blocker, "sbx_test", domain.NetworkFiltered)
+	_, _ = svc.writeGeneratedConfig(blocker, "sbx_test", domain.NetworkFiltered, "")
 }
 
 func TestResolveState(t *testing.T) {

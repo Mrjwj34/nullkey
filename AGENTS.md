@@ -92,11 +92,14 @@ make coverage             # 全局 Go 覆盖率门禁（≥90%）
 
 ```bash
 NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
+NULLKEY_SECRET_BACKEND=file \
   go run ./cmd/nullkeyd --listen 127.0.0.1:49152
 ```
 
 - token 优先读 `NULLKEY_DAEMON_TOKEN`；未设置时生成/复用
   `<NULLKEY_HOME>/daemon-token`（0600）。
+- 本地开发/CI 用 `NULLKEY_SECRET_BACKEND=file`。未签名 daemon 重建后 macOS 可能
+  对 Keychain 条目弹一次授权；拒绝后负缓存 60 秒并失败关闭，不要靠反复重试。
 - 不要把 token 放进命令行参数。
 - 健康检查：`curl -s http://127.0.0.1:49152/api/v1/health`。
 
@@ -213,6 +216,13 @@ NULLKEY_HOME=/tmp/nullkey-dev NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef \
 - terminal：一次性 ticket、WS `ready`/`terminal_id`、单写连接、`terminal_replaced`、无 scrollback。
 - credentials：macOS Keychain（cgo Security.framework，无 argv）、加密文件 CI fallback、只返回 fingerprint。
 - gateway：模型（OpenAI/Anthropic/Codex）、MCP（JSON-RPC/SSE/tool allowlist）、GitHub smart HTTP；流式转发。
+- gateway TLS：同一 loopback 端口 mux 明文 HTTP 与本地 CA 签发的 HTTPS；CA 只通过
+  `CODEX_CA_CERTIFICATE` 提供给沙箱，不装系统信任库。
+- Codex ChatGPT：导入保留 access/id/refresh token + account id，JWT `exp` 作为
+  `expires_at`，过期前刷新；网关按凭证注入 `ChatGPT-Account-Id` 并剥离沙箱同名头；
+  推理路由到 `chatgpt.com/backend-api/codex`；`/backend-api/*` 仅 allowlist。
+- 沙箱 Codex 配置由 daemon 渲染：HTTPS provider、`--no-daemon`、
+  `daemon_auto_start=false`、关闭 plugins/apps/system proxy/telemetry。
 - OAuth：PKCE、callback、取消/迟到回调互斥、refresh、宿主导入。
 - egress：CONNECT/HTTP、三档模式、allowlist、SSRF 拒绝、拒绝审计。
 - services：manifest 依赖拓扑、端口范围、健康检查、重启、停止顺序、生成 token。

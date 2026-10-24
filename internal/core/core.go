@@ -57,19 +57,21 @@ type MCPProxy interface {
 
 // Options wires the kernel services.
 type Options struct {
-	Home        string
-	Store       *sqlite.Store
-	Secrets     SecretStore
-	Runtime     *native.Runtime
-	Terminal    *terminal.Hub
-	Events      *events.Bus
-	Audit       *audit.Sink
-	Artifacts   ArtifactReader
-	MCP         MCPProxy
-	Logger      *slog.Logger
-	GatewayAddr string
-	ProxyAddr   string
-	ControlAddr string
+	Home          string
+	Store         *sqlite.Store
+	Secrets       SecretStore
+	Runtime       *native.Runtime
+	Terminal      *terminal.Hub
+	Events        *events.Bus
+	Audit         *audit.Sink
+	Artifacts     ArtifactReader
+	MCP           MCPProxy
+	Logger        *slog.Logger
+	GatewayAddr   string
+	GatewayTLSURL string
+	GatewayCAPath string
+	ProxyAddr     string
+	ControlAddr   string
 	// HostImportRoot overrides the directory scanned for importable host logins.
 	HostImportRoot string
 	// GatewayClient is used by model/git/OAuth HTTP calls. Tests may inject it.
@@ -91,6 +93,8 @@ type Service struct {
 	MCP           MCPProxy
 	Log           *slog.Logger
 	GatewayAddr   string
+	GatewayTLSURL string
+	GatewayCAPath string
 	ProxyAddr     string
 	ControlAddr   string
 	HostImportDir string
@@ -104,6 +108,10 @@ type Service struct {
 
 	servicesMu sync.Mutex
 	services   map[string]*serviceSupervisor
+
+	// refreshMu serializes OAuth refreshes so a rotating refresh token cannot
+	// be consumed twice by concurrent gateway requests.
+	refreshMu sync.Mutex
 }
 
 // New builds the service layer.
@@ -153,6 +161,8 @@ func New(opts Options) (*Service, error) {
 		MCP:           opts.MCP,
 		Log:           opts.Logger,
 		GatewayAddr:   opts.GatewayAddr,
+		GatewayTLSURL: opts.GatewayTLSURL,
+		GatewayCAPath: opts.GatewayCAPath,
 		ProxyAddr:     opts.ProxyAddr,
 		ControlAddr:   opts.ControlAddr,
 		HostImportDir: hostImport,
@@ -329,18 +339,71 @@ func (s *Service) harnessInstalled(id string) bool {
 }
 
 // harnessCommand resolves the command for a sandbox.
-func (s *Service) harnessCommand(id string) ([]string, error) {
+func (s *Service) harnessCommand(id string) ([]string, string, error) {
 	if id == "shell" || id == "" {
-		return []string{"/bin/sh"}, nil
+		return []string{"/bin/sh"}, "", nil
 	}
 	if !s.harnessInstalled(id) {
-		return nil, E(http.StatusConflict, "harness_not_installed", "harness is not installed")
+		return nil, "", E(http.StatusConflict, "harness_not_installed", "harness is not installed")
 	}
-	path, err := exec.LookPath(id)
+	path, err := lookPathOutsideHome(id)
 	if err != nil {
-		return nil, E(http.StatusConflict, "harness_not_installed", "harness binary is not available")
+		return nil, "", E(http.StatusConflict, "harness_not_installed", "harness binary is not available")
 	}
-	return []string{path}, nil
+	root := harnessRoot(path)
+	// Resolve symlinks so the sandbox profile can allow the real package
+	// directory instead of the host home that contains the shim.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if id == "codex" {
+		// Codex's shared app-server daemon probes host processes that Seatbelt
+		// denies. The flag is ignored by subcommands that do not use it.
+		return []string{path, "--no-daemon"}, root, nil
+	}
+	return []string{path}, root, nil
+}
+
+// lookPathOutsideHome prefers a PATH entry that is not under the host home.
+// Seatbelt denies the host home; using a visible install avoids broadening the
+// profile and also avoids accidentally selecting a stale per-user shim.
+func lookPathOutsideHome(id string) (string, error) {
+	hostHome, _ := os.UserHomeDir()
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, id)
+		if hostHome != "" && (candidate == hostHome || strings.HasPrefix(candidate, hostHome+string(filepath.Separator))) {
+			continue
+		}
+		if resolved, err := exec.LookPath(candidate); err == nil {
+			return resolved, nil
+		}
+	}
+	return exec.LookPath(id)
+}
+
+// harnessRoot returns the package directory a harness needs at runtime. For
+// npm-installed CLIs this is the package containing package.json (including
+// its node_modules), not the host home that happens to contain the shim.
+func harnessRoot(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = path
+	}
+	dir := filepath.Dir(resolved)
+	for i := 0; i < 6; i++ {
+		if info, err := os.Stat(filepath.Join(dir, "package.json")); err == nil && info.Mode().IsRegular() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return filepath.Dir(resolved)
 }
 
 // App is a desktop app catalog entry.
@@ -478,14 +541,29 @@ func sortedUnique(in []string) []string {
 	return out
 }
 
+// oauthSecret is the JSON shape stored in the secret store for OAuth
+// credentials. The fields beyond access/refresh are optional and preserve the
+// account identity needed for ChatGPT-backed providers.
+type oauthSecret struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	IDToken      string    `json:"id_token,omitempty"`
+	AccountID    string    `json:"account_id,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+// decodeOAuthSecret parses an OAuth bundle. It reports false for a raw API key.
+func decodeOAuthSecret(raw []byte) (oauthSecret, bool) {
+	var bundle oauthSecret
+	if json.Unmarshal(raw, &bundle) == nil && (bundle.AccessToken != "" || bundle.RefreshToken != "") {
+		return bundle, true
+	}
+	return oauthSecret{}, false
+}
+
 // decodeSecret parses an OAuth secret bundle or returns a raw API key.
 func decodeSecret(raw []byte) (accessToken, refreshToken string, expires time.Time) {
-	var bundle struct {
-		AccessToken  string    `json:"access_token"`
-		RefreshToken string    `json:"refresh_token"`
-		ExpiresAt    time.Time `json:"expires_at"`
-	}
-	if json.Unmarshal(raw, &bundle) == nil && (bundle.AccessToken != "" || bundle.RefreshToken != "") {
+	if bundle, ok := decodeOAuthSecret(raw); ok {
 		return bundle.AccessToken, bundle.RefreshToken, bundle.ExpiresAt
 	}
 	return string(raw), "", time.Time{}
@@ -493,11 +571,16 @@ func decodeSecret(raw []byte) (accessToken, refreshToken string, expires time.Ti
 
 // encodeOAuthSecret builds the stored OAuth bundle.
 func encodeOAuthSecret(access, refresh string, expires time.Time) []byte {
-	raw, _ := json.Marshal(map[string]any{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"expires_at":    expires.UTC().Format(time.RFC3339),
-	})
+	return encodeOAuthBundle(oauthSecret{AccessToken: access, RefreshToken: refresh, ExpiresAt: expires})
+}
+
+func encodeOAuthBundle(bundle oauthSecret) []byte {
+	if !bundle.ExpiresAt.IsZero() {
+		// Round-trip through UTC so comparisons stay chronological and the
+		// legacy RFC3339 representation remains stable.
+		bundle.ExpiresAt = bundle.ExpiresAt.UTC()
+	}
+	raw, _ := json.Marshal(bundle)
 	return raw
 }
 

@@ -160,6 +160,17 @@ func (s *Store) CredentialForProvider(ctx context.Context, providerID string) (d
 	return c, err
 }
 
+// RefreshableCredentialForProvider selects a connected or expired OAuth
+// credential. Expired entries remain eligible so the host can refresh them
+// without asking the user to sign in again.
+func (s *Store) RefreshableCredentialForProvider(ctx context.Context, providerID string) (domain.Credential, error) {
+	var c domain.Credential
+	err := s.scanCredential(s.db.QueryRowContext(ctx, `SELECT `+credentialColumns+` FROM credentials
+		WHERE provider_id=? AND auth_type='oauth' AND oauth_status IN ('connected','expired')
+		ORDER BY last_used_at DESC, created_at DESC LIMIT 1`, providerID), &c)
+	return c, err
+}
+
 // DeleteCredential removes metadata.
 func (s *Store) DeleteCredential(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM credentials WHERE id=?`, id)

@@ -35,6 +35,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/terminal", s.svc.TerminalHandler())
 	mux.Handle("/tunnel/", s.svc.TunnelHandler())
 	mux.HandleFunc("/openai/", s.model("openai"))
+	mux.HandleFunc("/codex/", s.model("codex"))
+	mux.HandleFunc("/backend-api/", s.codexBackend)
 	mux.HandleFunc("/anthropic/", s.model("anthropic"))
 	mux.HandleFunc("/mcp/", s.mcp)
 	mux.HandleFunc("/git/github/", s.git)
@@ -51,6 +53,16 @@ func (s *Server) model(provider string) http.HandlerFunc {
 		if err := s.svc.ModelGateway(r.Context(), sb, provider, w, r); err != nil {
 			s.writeError(w, err)
 		}
+	}
+}
+
+func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
+	sb, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if err := s.svc.CodexBackendGateway(r.Context(), sb, w, r); err != nil {
+		s.writeError(w, err)
 	}
 }
 

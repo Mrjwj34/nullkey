@@ -214,7 +214,11 @@ func (s *Service) monitorService(sup *serviceSupervisor, rs *runningService, res
 
 func (s *Service) waitHealthy(ctx context.Context, def serviceDef) error {
 	deadline := time.Now().Add(8 * time.Second)
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	// Never let a host HTTP(S)_PROXY setting redirect loopback health checks.
+	client := &http.Client{
+		Timeout:   500 * time.Millisecond,
+		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
+	}
 	path := def.Health
 	if path == "" {
 		path = "/"

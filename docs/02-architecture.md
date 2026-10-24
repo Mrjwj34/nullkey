@@ -146,13 +146,15 @@ type Runtime interface {
 
 ```text
 Codex config:
-  base_url = http://127.0.0.1:<gateway>/openai
+  base_url = https://127.0.0.1:<gateway>/openai
+  chatgpt_base_url = https://127.0.0.1:<gateway>/backend-api
   env_key  = NULLKEY_TOKEN
+  CODEX_CA_CERTIFICATE = state/nullkey/gateway-ca.pem
 
-Gateway:
+Gateway (same loopback port muxes HTTP + TLS):
   token → sandbox_id
-  取 Keychain 中的 API key 或 OAuth access token
-  注入 Authorization / x-api-key
+  取 Keychain 中的 API key 或 OAuth access token（Codex ChatGPT 走 backend-api/codex）
+  注入 Authorization / ChatGPT-Account-Id（删除沙箱同名头）
   流式回传
 ```
 

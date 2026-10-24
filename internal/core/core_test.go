@@ -581,15 +581,15 @@ func TestHarnessCommand(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	svc, home := newTestService(t)
 
-	cmd, err := svc.harnessCommand("")
+	cmd, _, err := svc.harnessCommand("")
 	if err != nil || len(cmd) != 1 || cmd[0] != "/bin/sh" {
 		t.Fatalf("empty harness = %v, %v", cmd, err)
 	}
-	if cmd, err = svc.harnessCommand("shell"); err != nil || cmd[0] != "/bin/sh" {
+	if cmd, _, err = svc.harnessCommand("shell"); err != nil || cmd[0] != "/bin/sh" {
 		t.Fatalf("shell = %v, %v", cmd, err)
 	}
 
-	_, err = svc.harnessCommand("codex")
+	_, _, err = svc.harnessCommand("codex")
 	wantError(t, err, http.StatusConflict, "harness_not_installed")
 
 	// Marker present but the binary is missing: distinct error path.
@@ -599,15 +599,16 @@ func TestHarnessCommand(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "harnesses", "codex", "installed.json"), []byte(`{}`), 0o600); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
-	_, err = svc.harnessCommand("codex")
+	_, _, err = svc.harnessCommand("codex")
 	wantError(t, err, http.StatusConflict, "harness_not_installed")
 
 	bin := filepath.Join(binDir, "codex")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	cmd, err = svc.harnessCommand("codex")
-	if err != nil || len(cmd) != 1 || cmd[0] != bin {
+	cmd, _, err = svc.harnessCommand("codex")
+	resolved, _ := filepath.EvalSymlinks(bin)
+	if err != nil || len(cmd) != 2 || cmd[0] != resolved || cmd[1] != "--no-daemon" {
 		t.Fatalf("codex command = %v, %v", cmd, err)
 	}
 }

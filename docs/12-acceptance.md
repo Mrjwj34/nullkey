@@ -80,7 +80,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 
 | ID | 级别 | 断言 | 验证 | 状态 |
 |---|---|---|---|---|
-| AC-SEC-001 | P2 | 沙箱内 `env` / `ps e` / 进程环境只有 `NULLKEY_TOKEN`、`NULLKEY_GATEWAY`、`NULLKEY_PROXY`（及明确允许的遥测关闭变量）；不出现任何宿主凭证。 | `TestAC_SEC_001_SandboxEnv` | ✅ |
+| AC-SEC-001 | P2 | 沙箱内 `env` / `ps e` / 进程环境只有 `NULLKEY_TOKEN`、`NULLKEY_GATEWAY`、`NULLKEY_GATEWAY_TLS`、`NULLKEY_PROXY`（及明确允许的 CA/遥测变量）；不出现任何宿主凭证。 | `TestAC_SEC_001_SandboxEnv` | ✅ |
 | AC-SEC-002 | P2 | 沙箱不能读取宿主 `$HOME`、`~/.ssh`、`~/.aws`、`~/Library/Keychains`；读取失败而不是返回空文件。 | `TestAC_SEC_002_HostFsIsolation` | ✅ |
 | AC-SEC-003 | P2 | sandbox token 为 32 字节随机数的 Base64URL；DB 只存 SHA-256；API/日志不返回明文；不同 sandbox token 不同。 | `TestAC_SEC_003_TokenFormatAndHash` | ✅ |
 | AC-SEC-004 | P2 | `POST /sandboxes/{id}/stop` 后立即用旧 token 调 gateway 返回 401 `token_invalid`；删除同样失效。 | `TestAC_SEC_004_StopRevokesToken` | ✅ |
@@ -117,6 +117,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-NET-006 | P7 | 私有 repo 通过 gateway clone/fetch/push 成功；沙箱 `.git/config` 与 remote 不含真实 token。 | `TestAC_NET_006_GitProxy` | ✅ |
 | AC-NET-007 | P4/P7 | gateway/proxy 不可用或上游错误时返回明确 5xx/错误码；不降级直连、不静默重试到其他目的地。 | `TestAC_NET_007_FailClosed` | ✅ |
 | AC-NET-008 | P7 | 三档模式都保留 gateway；`services_only` 明确不是离线；能力列表只报告 runtime 能实际执行的模式。 | `TestAC_NET_008_ModeSemantics` | ✅ |
+| AC-NET-009 | P4 | gateway 同时接受 loopback 明文 HTTP 与使用本地 CA 的 HTTPS；Codex 所需的 HTTPS origin 由 `CODEX_CA_CERTIFICATE` 信任，证书不安装到系统信任库。 | `TestAC_NET_009_HTTPSGateway` | ✅ |
 
 ## 6. 凭证与 OAuth
 
@@ -127,6 +128,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-CRED-003 | P5 | OAuth start 返回 `auth_url`/`flow_id`；PKCE + state 校验；callback 成功写 Keychain；refresh 更新过期时间；过期返回 `reauth_required`。 | `TestAC_CRED_003_OAuthPKCE` | ✅ |
 | AC-CRED-004 | P5 | 宿主已有 Codex/Claude 登录可被检测（`/oauth/importable`）并导入为 credential；导入后 fingerprint 可读、无明文。 | `TestAC_CRED_004_HostImport` | ✅ |
 | AC-CRED-005 | P3 | `GET /providers` 至少含 Codex/OpenAI/Anthropic/GitHub；字段 `auth_types`/`base_url` 与 registry 一致。 | `TestAC_CRED_005_ProviderRegistry` | ✅ |
+| AC-CRED-006 | P5 | Codex ChatGPT 登录导入保留 access/id/refresh token 与 account id；`expires_at` 取自 access token JWT `exp`（不使用宿主不存在的字段）；过期前可刷新并保留 account id。 | `TestAC_CRED_006_CodexHostImportFullBundle` | ✅ |
 
 ## 7. MCP
 

@@ -61,46 +61,39 @@ func copyResponseHeaders(dst, src http.Header) {
 
 // ModelGateway proxies a model request to the provider's upstream, injecting
 // the real credential only in the host process. Responses are streamed.
+//
+// Codex ChatGPT logins are not OpenAI API keys: their responses traffic lives
+// under https://chatgpt.com/backend-api/codex. The sandbox still sees a normal
+// OpenAI-compatible provider whose bearer token is the per-sandbox token.
 func (s *Service) ModelGateway(ctx context.Context, sb domain.Sandbox, providerID string, w http.ResponseWriter, r *http.Request) error {
-	if providerID == "codex" {
-		providerID = "openai"
-	}
 	provider, ok := providerByID(providerID)
 	if !ok {
 		return E(http.StatusForbidden, "network_denied", "unknown model provider")
 	}
-	cred, err := s.credentialForProvider(ctx, providerID)
-	if err != nil {
-		// A codex OAuth credential is a valid fallback for the OpenAI API.
-		if providerID == "openai" {
-			if fallback, ferr := s.credentialForProvider(ctx, "codex"); ferr == nil {
-				cred = fallback
-				err = nil
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
-	secret, err := s.CredentialSecret(ctx, cred)
+	cred, err := s.modelCredential(ctx, providerID)
 	if err != nil {
 		return err
 	}
-	base := strings.TrimRight(cred.BaseURL, "/")
-	if base == "" && provider.BaseURL != nil {
-		base = strings.TrimRight(*provider.BaseURL, "/")
+	bundle, err := s.credentialBundleFor(ctx, cred)
+	if err != nil {
+		return err
 	}
+	base := modelUpstreamBase(cred, provider, providerID)
 	if base == "" {
 		return E(http.StatusBadGateway, "gateway_unavailable", "provider has no upstream configured")
 	}
 	rel := strings.TrimPrefix(r.URL.Path, "/"+providerID)
+	if rel == r.URL.Path && providerID == "codex" {
+		// The historical route name for Codex was /openai.
+		rel = strings.TrimPrefix(r.URL.Path, "/openai")
+	}
 	if rel == "" {
 		rel = "/"
 	}
 	if !strings.HasPrefix(rel, "/") {
 		rel = "/" + rel
 	}
-	target := base + rel
+	target := strings.TrimRight(base, "/") + rel
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -108,8 +101,10 @@ func (s *Service) ModelGateway(ctx context.Context, sb domain.Sandbox, providerI
 	if err != nil {
 		return E(http.StatusBadRequest, "invalid_request", "invalid upstream request")
 	}
+	upstream.ContentLength = r.ContentLength
 	sanitizeRequestHeaders(upstream.Header, r.Header)
-	applyCredential(upstream, cred, secret, providerID)
+	applyCredential(upstream, cred, bundle.AccessToken, cred.ProviderID)
+	applyCodexIdentity(upstream, cred, bundle)
 	if upstream.Header.Get("Content-Type") == "" {
 		upstream.Header.Set("Content-Type", "application/json")
 	}
@@ -136,8 +131,63 @@ func (s *Service) ModelGateway(ctx context.Context, sb domain.Sandbox, providerI
 			break
 		}
 	}
-	s.Audit.Record(ctx, "gateway.model", &sb.ID, map[string]any{"provider": providerID, "status": resp.StatusCode})
+	s.Audit.Record(ctx, "gateway.model", &sb.ID, map[string]any{"provider": providerID, "upstream_provider": cred.ProviderID, "status": resp.StatusCode})
 	return nil
+}
+
+// modelCredential picks the best host credential for a model route. An OpenAI
+// route may fall back to an imported Codex ChatGPT login.
+func (s *Service) modelCredential(ctx context.Context, providerID string) (domain.Credential, error) {
+	candidates := []string{providerID}
+	if providerID == "openai" {
+		candidates = append(candidates, "codex")
+	}
+	for _, id := range candidates {
+		if cred, err := s.Store.CredentialForProvider(ctx, id); err == nil {
+			_ = s.Store.TouchCredential(ctx, cred.ID)
+			return cred, nil
+		}
+		if cred, err := s.Store.RefreshableCredentialForProvider(ctx, id); err == nil {
+			_ = s.Store.TouchCredential(ctx, cred.ID)
+			return cred, nil
+		}
+	}
+	return domain.Credential{}, E(http.StatusUnauthorized, "reauth_required", "no credential is connected for this provider")
+}
+
+// modelUpstreamBase returns the inference root for the selected credential.
+// A Codex credential always targets the ChatGPT Codex backend, regardless of
+// whether the sandbox called /openai or /codex.
+func modelUpstreamBase(cred domain.Credential, provider Provider, route string) string {
+	if cred.ProviderID == "codex" || route == "codex" {
+		if cred.AuthType == domain.AuthOAuth {
+			if cred.BaseURL != "" {
+				return strings.TrimRight(cred.BaseURL, "/")
+			}
+			return "https://chatgpt.com/backend-api/codex"
+		}
+		// A Codex API key is an OpenAI API key, not a ChatGPT session.
+		return "https://api.openai.com/v1"
+	}
+	if cred.BaseURL != "" {
+		return strings.TrimRight(cred.BaseURL, "/")
+	}
+	if provider.BaseURL != nil {
+		return strings.TrimRight(*provider.BaseURL, "/")
+	}
+	return ""
+}
+
+// applyCodexIdentity makes account selection a host decision: any account id
+// supplied by the sandbox is discarded and the imported account is injected.
+func applyCodexIdentity(req *http.Request, cred domain.Credential, bundle credentialBundle) {
+	req.Header.Del("ChatGPT-Account-Id")
+	if cred.ProviderID != "codex" || cred.AuthType != domain.AuthOAuth {
+		return
+	}
+	if bundle.AccountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", bundle.AccountID)
+	}
 }
 
 func applyCredential(req *http.Request, cred domain.Credential, secret, providerID string) {

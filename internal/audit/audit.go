@@ -4,6 +4,7 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/Mrjwj34/nullkey/internal/domain"
 	"github.com/Mrjwj34/nullkey/internal/redact"
@@ -34,7 +35,15 @@ func (s *Sink) Record(ctx context.Context, eventType string, sandboxID *string, 
 		Detail:    redact.Map(detail),
 	}
 	event.TS = now()
-	if err := s.store.AppendAudit(ctx, event); err != nil {
+	// Audit writes must survive request cancellation: a client disconnect is
+	// not a reason to lose the security record. Bound the detached context so
+	// a stuck database cannot hold the caller forever.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.store.AppendAudit(writeCtx, event); err != nil {
 		s.log.Error("audit_append_failed", "type", eventType, "error", err)
 	}
 }

@@ -200,3 +200,26 @@ func TestHelperErrorSanitizesAndTruncates(t *testing.T) {
 		t.Fatalf("truncated helperError must not contain newlines: %q", long)
 	}
 }
+
+func TestProfileAllowsHarnessPackageButNotHostHomeContents(t *testing.T) {
+	profile := BuildProfile(ProfileOptions{
+		Workspace:   "/tmp/ws",
+		State:       "/tmp/state",
+		Cache:       "/tmp/cache",
+		HostHome:    "/Users/alice",
+		HarnessRoot: "/Users/alice/.local/lib/node_modules/@openai/codex",
+		Mode:        domain.NetworkFiltered,
+	})
+	for _, want := range []string{
+		`(allow file-read* (subpath "/Users/alice/.local/lib/node_modules/@openai/codex"))`,
+		`(allow file-read-metadata (subpath "/Users/alice"))`,
+		`(allow file-read-metadata (subpath "/Users"))`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Fatalf("profile missing %q:\n%s", want, profile)
+		}
+	}
+	if strings.Contains(profile, `(allow file-read* (subpath "/Users/alice"))`) {
+		t.Fatal("host home contents were allowed")
+	}
+}

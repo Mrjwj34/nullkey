@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -382,12 +383,42 @@ func TestSandboxServicesNative(t *testing.T) {
 		t.Fatalf("procs=%d order=%v", procs, order)
 	}
 	evs, _, err := svc.Audit.List(ctx, 50, "", "service.started")
-	if err != nil || len(evs) < 2 {
-		t.Fatalf("service.started audit = %d, %v", len(evs), err)
+	if err != nil {
+		t.Fatalf("service.started audit: %v", err)
 	}
-	exited, _, err := svc.Audit.List(ctx, 50, "", "service.exited")
-	if err != nil || len(exited) == 0 {
-		t.Fatalf("service.exited audit = %d, %v", len(exited), err)
+	// A one-shot service may exit before the first health probe, in which case
+	// the failure path is service.error rather than service.started. The web
+	// service must always reach ready and emit its start event.
+	webStarted, onceStarted := false, false
+	for _, ev := range evs {
+		if ev.Detail["service"] == "web" {
+			webStarted = true
+		}
+		if ev.Detail["service"] == "once" {
+			onceStarted = true
+		}
+	}
+	if !webStarted {
+		t.Fatalf("web service.started audit missing: %+v", evs)
+	}
+	if onceStarted {
+		exited, _, err := svc.Audit.List(ctx, 50, "", "service.exited")
+		if err != nil || len(exited) == 0 {
+			t.Fatalf("service.exited audit = %d, %v", len(exited), err)
+		}
+	} else {
+		// The one-shot may exit before the first health probe. In that case the
+		// supervisor must record the failure path instead of a start event.
+		errors, _, err := svc.Audit.List(ctx, 50, "", "service.error")
+		onceError := false
+		for _, ev := range errors {
+			if ev.Detail["service"] == "once" {
+				onceError = true
+			}
+		}
+		if err != nil || !onceError {
+			t.Fatalf("once service.error audit missing: %d, %v", len(errors), err)
+		}
 	}
 
 	// The terminal and generated config belong to the same sandbox.
@@ -454,5 +485,23 @@ func TestInitSupervisorMaps(t *testing.T) {
 	svc.initSupervisorMaps()
 	if _, ok := svc.services["x"]; !ok {
 		t.Fatalf("existing map replaced")
+	}
+}
+
+func TestWaitHealthyIgnoresHostProxy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	svc, _ := newTestService(t)
+	if err := svc.waitHealthy(context.Background(), serviceDef{Health: "/healthz", Port: port}); err != nil {
+		t.Fatalf("waitHealthy used the host proxy: %v", err)
 	}
 }

@@ -27,22 +27,56 @@
 
 ```toml
 model_provider = "nullkey"
+chatgpt_base_url = "https://127.0.0.1:<gateway>/backend-api"
+check_for_update_on_startup = false
 
 [model_providers.nullkey]
 name = "Nullkey"
-base_url = "http://127.0.0.1:<gateway>/openai"
+base_url = "https://127.0.0.1:<gateway>/openai"
+model_catalog_url = "https://127.0.0.1:<gateway>/backend-api/codex/models"
 env_key = "NULLKEY_TOKEN"
-# wire_api 按 Codex 版本选择 "responses" 或 "chat"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+
+[features]
+daemon_auto_start = false
+plugins = false
+apps = false
+respect_system_proxy = false
+
+[analytics]
+enabled = false
 ```
 
-沙箱环境：
+沙箱环境（token 由 daemon 注入，不写入 config）：
 
 ```bash
 export NULLKEY_TOKEN="<per-sandbox-token>"
+export CODEX_CA_CERTIFICATE="$HOME/.../nullkey/gateway-ca.pem"
+export CODEX_HOME="$HOME/.codex"
 ```
 
-- Gateway 在 `/openai/*` 上把 token 换成真实 API key 或 OAuth access token。
+- Codex 0.164 要求 ChatGPT 后端是 HTTPS origin。gateway 在同一个 loopback 端口上
+  同时接受明文 HTTP 和 TLS；TLS 证书由 Nullkey 本地 CA 签发，只通过
+  `CODEX_CA_CERTIFICATE` 提供给沙箱进程，不安装到系统信任库。
+- Gateway 在 `/openai/*` 上把 per-sandbox token 换成宿主 API key 或 OAuth
+  access token；Codex 凭证的推理流量去
+  `https://chatgpt.com/backend-api/codex/<path>`，不是 `api.openai.com`。
+- `ChatGPT-Account-Id` 由网关按导入凭证注入；沙箱自带的同名头会被删除。
+- `/backend-api/*` 只代理 Codex 需要的 allowlist（账户检查、模型目录、插件 MCP），
+  不是通用 ChatGPT 代理。
+- 导入的 ChatGPT 凭证保留 access/id/refresh token 与 account id；`expires_at`
+  来自 access token JWT 的 `exp`，网关在过期前刷新并保留 account id。
+- `model_catalog_url` 指向网关的 `/backend-api/codex/models`；Codex 因此使用该
+  ChatGPT 账号实际支持的模型列表，而不是内置默认模型（后者可能被后端拒绝）。
 - 不在配置文件里写真实 key；token 只从 env 读取。
+- launcher 追加 `--no-daemon`，且配置关闭 `daemon_auto_start`：Codex 不再尝试
+  探测/拉起共享 app-server daemon（Seatbelt 下会被拒绝）。
+- v1 默认关闭 Codex 的 `plugins`/`apps`。当前 Codex 的插件 bootstrap
+  (`/backend-api/plugins/featured`) 不带 bearer，无法在不伪造上游状态的情况下
+  通过认证网关；`/backend-api/ps/mcp` 的 allowlist 代理已保留，后续版本在
+  Codex 补齐鉴权后再默认启用。
 
 ### 登录
 

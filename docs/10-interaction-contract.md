@@ -46,3 +46,17 @@
 - [ ] 键盘可进入并离开终端、完成授权/取消/确认；焦点恢复正确；VoiceOver 能读出状态和错误。
 - [ ] 200% 文本缩放和三种系统辅助显示设置下操作可用；连续操作不会被动画锁住。
 - [ ] 按 [SLO](../slo.md) 测量 POST → WS ready → 输入启用，另报 harness 就绪时间与失败次数。
+
+## Codex ChatGPT 登录（issue #8）
+
+- 宿主已有 `auth_mode=chatgpt` 登录时，导入后 GUI 的 `expires_at` 非空，来源是
+  access token JWT 的 `exp`；refresh/id token 与 account id 由宿主保存，不展示。
+- 沙箱内 Codex 无需再次登录：`~/.codex/config.toml` 由 daemon 渲染，只引用
+  `NULLKEY_TOKEN` 和本地 gateway；用户不应看到 `codex login`。
+- Codex 使用 `https://127.0.0.1:<gateway>/openai`，并由 `CODEX_CA_CERTIFICATE`
+  信任 Nullkey 本地 CA；CA 不进入系统钥匙串/信任库。
+- 网关按导入的 account id 注入 `ChatGPT-Account-Id`；沙箱无法切换账号。
+- Codex 的插件/应用与共享 daemon 在 v1 沙箱内默认关闭；终端启动不再等待
+  app-server 探测或 WebSocket 回退。
+- 凭证过期前 gateway 自动刷新；刷新失败时返回 `reauth_required`，不把旧 token
+  发往第三方，也不降级直连。
