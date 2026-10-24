@@ -115,6 +115,9 @@ type terminalClient struct {
 	mu         sync.Mutex
 	output     strings.Builder
 	messages   chan wsMessage
+	// dead is closed when the socket stops delivering, so a wait reports a
+	// dropped terminal instead of timing out as if output were merely slow.
+	dead chan struct{}
 }
 
 func dialTerminal(t *testing.T, d *daemon, sandboxID string) *terminalClient {
@@ -136,7 +139,14 @@ func dialTerminal(t *testing.T, d *daemon, sandboxID string) *terminalClient {
 		cancel()
 		t.Fatalf("dial terminal: %v", err)
 	}
-	c := &terminalClient{t: t, conn: conn, ctx: ctx, cancel: cancel, messages: make(chan wsMessage, 512)}
+	c := &terminalClient{
+		t:        t,
+		conn:     conn,
+		ctx:      ctx,
+		cancel:   cancel,
+		messages: make(chan wsMessage, 512),
+		dead:     make(chan struct{}),
+	}
 	go c.readLoop()
 	ready := c.waitType("ready", 3*time.Second)
 	if ready.TerminalID == "" {
@@ -147,6 +157,7 @@ func dialTerminal(t *testing.T, d *daemon, sandboxID string) *terminalClient {
 }
 
 func (c *terminalClient) readLoop() {
+	defer close(c.dead)
 	for {
 		_, raw, err := c.conn.Read(c.ctx)
 		if err != nil {
@@ -220,6 +231,11 @@ func (c *terminalClient) readUntil(substr string, timeout time.Duration) string 
 		out := c.Output()
 		if strings.Contains(out, substr) {
 			return out
+		}
+		select {
+		case <-c.dead:
+			c.t.Fatalf("terminal closed while waiting for output %q; output=%q", substr, c.Output())
+		default:
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

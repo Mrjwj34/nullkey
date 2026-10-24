@@ -31,6 +31,7 @@ func TestBuildProfileExactDefaultRules(t *testing.T) {
 (allow file-write* (subpath "/dev") (subpath "/private/tmp"))
 (deny file-read* (subpath "/Users") (subpath "/System/Volumes/Data/Users") (subpath "/Volumes") (subpath "/private/var/root"))
 (deny file-write* (subpath "/Users") (subpath "/System/Volumes/Data/Users") (subpath "/Volumes") (subpath "/private/var/root"))
+(allow file-read-metadata (literal "/nonexistent-nullkey"))
 (allow file-read* (subpath "/nonexistent-nullkey/workspace"))
 (allow file-write* (subpath "/nonexistent-nullkey/workspace"))
 (allow file-read* (subpath "/nonexistent-nullkey/state"))
@@ -221,5 +222,38 @@ func TestProfileAllowsHarnessPackageButNotHostHomeContents(t *testing.T) {
 	}
 	if strings.Contains(profile, `(allow file-read* (subpath "/Users/alice"))`) {
 		t.Fatal("host home contents were allowed")
+	}
+}
+
+func TestProfileAllowsAncestorMetadataForSandboxDirs(t *testing.T) {
+	profile := BuildProfile(ProfileOptions{
+		Workspace: "/Users/alice/Work/demo",
+		State:     "/Users/alice/Library/Application Support/Nullkey/states/codex/st_1",
+		Cache:     "/Users/alice/Library/Application Support/Nullkey/cache/sbx_1",
+		HostHome:  "/Users/alice",
+		Mode:      domain.NetworkFiltered,
+	})
+	for _, want := range []string{
+		`(allow file-read-metadata (literal "/Users/alice"))`,
+		`(allow file-read-metadata (literal "/Users/alice/Work"))`,
+		`(allow file-read-metadata (literal "/Users/alice/Library/Application Support/Nullkey/states/codex"))`,
+		`(allow file-read-metadata (literal "/Users"))`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Fatalf("profile missing %q:\n%s", want, profile)
+		}
+	}
+	// Ancestors must stay stat-only: no subtree metadata, no contents.
+	for _, reject := range []string{
+		`(allow file-read-metadata (subpath "/Users/alice"))`,
+		`(allow file-read* (subpath "/Users/alice"))`,
+		`(allow file-read-metadata (literal "/"))`,
+	} {
+		if strings.Contains(profile, reject) {
+			t.Fatalf("profile must not contain %q:\n%s", reject, profile)
+		}
+	}
+	if got := strings.Count(profile, `(allow file-read-metadata (literal "/Users/alice"))`); got != 1 {
+		t.Fatalf("ancestor allowance repeated %d times, want 1", got)
 	}
 }

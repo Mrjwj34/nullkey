@@ -15,8 +15,10 @@ Nullkey 是 macOS 上的本地 Agent 沙箱。**唯一不可妥协的产品保�
 
 ## 2. 硬边界
 
-- **不要动 GUI**。GUI 由独立团队负责；本仓库没有 GUI 代码。唯一协作面是
-  [`api/openapi.yaml`](api/openapi.yaml)。
+- **GUI 在 `apps/nullkey-gui`，与 kernel 同仓异责**。GUI 只能通过
+  [`api/openapi.yaml`](api/openapi.yaml) 描述的端点访问 daemon：不读宿主凭证文件、
+  不碰 Keychain、不绕过 control API。改 GUI 不等于可以顺手改契约；需要新端点就走
+  §7 的流程。daemon 侧改动不要为了迁就 GUI 临时放宽契约或鉴权。
 - **不要修改 OpenAPI 语义**。设计期修订已完成（`services_only`、取消端点、删除语义）；
   之后的 v1 只做加法。删除/重命名字段、改错误码、改路径需要 ADR + GUI 团队确认。
 - **不要实现 v1.1 的 Host Tool Gateway/Terraform**。`gh`/`aws`/`kubectl`/`terraform`
@@ -61,6 +63,7 @@ internal/ports/           adapter 接口
 internal/version/         版本（ldflags）
 test/acceptance/          黑盒验收（-tags acceptance）
 api/openapi.yaml          GUI 契约（冻结）
+apps/nullkey-gui/         macOS GUI（Flutter + Forui，只经 OpenAPI 访问 daemon）
 docs/                    设计/计划/验收
 ```
 
@@ -84,9 +87,20 @@ make release-slo          # release-only：SLO gate（严格）
 make coverage             # 全局 Go 覆盖率门禁（≥90%）
 ```
 
-普通 PR CI 并行跑 static/build/unit/acceptance/coverage/contract，不跑 product/SLO；覆盖率必须 ≥90%。
-发布 GitHub Release 时 `.github/workflows/release.yml` 才运行 product 与 SLO gate；
-不要把 release-only 断言塞回 PR CI。
+GUI（在 `apps/nullkey-gui` 下）：
+
+```bash
+flutter pub get
+flutter analyze           # 必须干净
+flutter test              # widget/单测
+flutter build macos --release
+```
+
+普通 PR CI 并行跑 static/build/unit/acceptance/coverage/contract 与 GUI 的
+analyze+test，不跑 product/SLO；覆盖率必须 ≥90%。
+发布 GitHub Release 时 `.github/workflows/release.yml` 才运行 product 与 SLO gate，
+两者通过后构建并上传发布产物（两个架构的 daemon 压缩包 + `Nullkey.dmg` + 校验和，
+ad-hoc 签名，未公证）；不要把 release-only 断言塞回 PR CI。
 
 本地启动：
 
@@ -222,13 +236,21 @@ NULLKEY_SECRET_BACKEND=file \
   `expires_at`，过期前刷新；网关按凭证注入 `ChatGPT-Account-Id` 并剥离沙箱同名头；
   推理路由到 `chatgpt.com/backend-api/codex`；`/backend-api/*` 仅 allowlist。
 - 沙箱 Codex 配置由 daemon 渲染：HTTPS provider、`--no-daemon`、
-  `daemon_auto_start=false`、关闭 plugins/apps/system proxy/telemetry。
+  `daemon_auto_start=false`、关闭 plugins/apps/system proxy/telemetry；并且
+  `approval_policy="never"`、`sandbox_mode="danger-full-access"`、workspace
+  `trust_level="trusted"`——codex 在我们的 Seatbelt 里不能再套一层自己的沙箱，
+  否则每条命令都变成审批提示。隔离由 Nullkey 的 profile 保证，不靠 codex 自觉。
+- Seatbelt profile 对 workspace/state/cache 的各级父目录放 `file-read-metadata`
+  （`literal`，不是 `subpath`）：解析绝对路径会 lstat 每一段，缺了就连
+  `CODEX_HOME` 都 canonicalize 不了。
 - OAuth：PKCE、callback、取消/迟到回调互斥、refresh、宿主导入。
 - egress：CONNECT/HTTP、三档模式、allowlist、SSRF 拒绝、拒绝审计。
 - services：manifest 依赖拓扑、端口范围、健康检查、重启、停止顺序、生成 token。
 - tunnel：声明服务、一次性 ticket、cookie session、HTTP/WS/SSE、Origin/路径重写。
 - artifacts：只读列表/预览/diff，canonicalize + symlink 防逃逸，1MiB 截断。
 - audit/SSE/redaction、scan（仅 generated_runtime）、SLO 基线。
+- GUI：`apps/nullkey-gui`（Flutter + Forui）按 OpenAPI 对接 daemon，连接来源为
+  dart-define/环境变量 → `<NULLKEY_HOME>/daemon-token` → Core Mock 演示态。
 
 未实现/明确不做：
 

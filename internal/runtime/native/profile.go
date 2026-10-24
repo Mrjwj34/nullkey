@@ -79,6 +79,33 @@ func BuildProfile(opts ProfileOptions) string {
 		}
 	}
 
+	// Resolving an absolute path requires metadata on every component, so a
+	// sandbox directory inside a denied tree stays unreachable until its
+	// ancestors are visible: Codex canonicalizes CODEX_HOME at startup and
+	// exits when any component is denied. A literal grants stat on that exact
+	// directory only, not a listing of it nor metadata for its subtree.
+	seen := map[string]bool{}
+	for _, path := range []string{opts.Workspace, opts.State, opts.Cache} {
+		if path == "" {
+			continue
+		}
+		variants := []string{path}
+		if resolved := canonicalPath(path); resolved != path {
+			variants = append(variants, resolved)
+		}
+		for _, variant := range variants {
+			for _, dir := range ancestors(filepath.Dir(variant)) {
+				if dir == "/" || seen[dir] {
+					continue
+				}
+				seen[dir] = true
+				b.WriteString("(allow file-read-metadata (literal ")
+				b.WriteString(quote(dir))
+				b.WriteString("))\n")
+			}
+		}
+	}
+
 	allowed := []string{opts.Workspace, opts.State, opts.Cache, opts.HarnessRoot}
 	for _, path := range allowed {
 		if path == "" {

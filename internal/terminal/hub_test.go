@@ -35,6 +35,9 @@ type fakeSource struct {
 	rows     int
 	closed   int
 	exitCode int
+	// writeLimit caps how many bytes one Write accepts, like a tty input queue.
+	writeLimit int
+	writeErr   error
 
 	done      chan struct{}
 	doneOnce  sync.Once
@@ -56,9 +59,27 @@ func (f *fakeSource) Read(p []byte) (int, error) { return f.pr.Read(p) }
 
 func (f *fakeSource) Write(p []byte) (int, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	if f.writeLimit > 0 && f.writeLimit < len(p) {
+		p = p[:f.writeLimit]
+	}
 	f.input.Write(p)
-	f.mu.Unlock()
 	return len(p), nil
+}
+
+func (f *fakeSource) setWriteLimit(limit int) {
+	f.mu.Lock()
+	f.writeLimit = limit
+	f.mu.Unlock()
+}
+
+func (f *fakeSource) setWriteErr(err error) {
+	f.mu.Lock()
+	f.writeErr = err
+	f.mu.Unlock()
 }
 
 func (f *fakeSource) Close() error {
@@ -165,7 +186,12 @@ func isClosed(ch <-chan struct{}) bool {
 }
 
 func newTestClient(capacity int) *client {
-	return &client{send: make(chan serverMessage, capacity), closed: make(chan struct{})}
+	return &client{
+		send:   make(chan serverMessage, capacity),
+		closed: make(chan struct{}),
+		// Short enough to keep tests fast; the production value is seconds.
+		sendTimeout: 200 * time.Millisecond,
+	}
 }
 
 func sessionFor(t *testing.T, h *Hub, sandboxID string) *Session {
@@ -430,6 +456,8 @@ func TestPumpDetachesSlowClient(t *testing.T) {
 	slow.send <- serverMessage{Type: "pending"} // fill the buffer; nothing drains it
 	attachClient(t, s, slow)
 
+	// Nothing ever drains this client, so the pump waits out sendTimeout and
+	// then detaches it.
 	src.feed(t, "first chunk")
 	waitFor(t, "slow client close", func() bool { return isClosed(slow.closed) })
 	waitFor(t, "slow client detach", func() bool { return attachedClient(s) == nil })
@@ -438,6 +466,51 @@ func TestPumpDetachesSlowClient(t *testing.T) {
 	src.feed(t, "second chunk")
 	if got := attachedClient(s); got != nil {
 		t.Fatalf("session still has client %p", got)
+	}
+}
+
+func TestPumpWaitsForBusyClient(t *testing.T) {
+	h := NewHub(nil)
+	src := newFakeSource(80, 24)
+	t.Cleanup(func() { h.Close("sbx_1") })
+	h.Open("sbx_1", src)
+	s := sessionFor(t, h, "sbx_1")
+
+	busy := newTestClient(1)
+	busy.sendTimeout = 5 * time.Second
+	busy.send <- serverMessage{Type: "pending"}
+	attachClient(t, s, busy)
+
+	src.feed(t, "burst")
+	// A client that is merely behind must not lose output: freeing a slot
+	// lets the queued chunk through.
+	time.Sleep(50 * time.Millisecond)
+	if msg := <-busy.send; msg.Type != "pending" {
+		t.Fatalf("first queued message = %+v, want pending", msg)
+	}
+	if msg := recvClientMessage(t, busy); msg.Type != "output" || msg.Data != "burst" {
+		t.Fatalf("second queued message = %+v, want the burst output", msg)
+	}
+	if isClosed(busy.closed) {
+		t.Fatal("a client that caught up was closed")
+	}
+	if got := attachedClient(s); got != busy {
+		t.Fatalf("attached client = %p, want the busy client", got)
+	}
+}
+
+func TestClientSendOutputTimesOut(t *testing.T) {
+	c := newTestClient(0)
+	start := time.Now()
+	if c.sendOutput(serverMessage{Type: "output", Data: "x"}) {
+		t.Fatal("sendOutput succeeded with no reader")
+	}
+	if waited := time.Since(start); waited < c.sendTimeout {
+		t.Fatalf("sendOutput gave up after %s, want at least %s", waited, c.sendTimeout)
+	}
+	c.close()
+	if c.sendOutput(serverMessage{Type: "output", Data: "x"}) {
+		t.Fatal("sendOutput succeeded after close")
 	}
 }
 
@@ -927,6 +1000,60 @@ func TestServeWSValidTicketQuery(t *testing.T) {
 	if calls := src.resizeCalls(); len(calls) == 0 || calls[len(calls)-1] != (resizeCall{cols: 90, rows: 30}) {
 		t.Fatalf("invalid resize reached the PTY: %+v", calls)
 	}
+}
+
+func TestServeWSInputSurvivesShortWrites(t *testing.T) {
+	h := NewHub(nil)
+	src := newFakeSource(80, 24)
+	t.Cleanup(func() { h.Close("sbx_1") })
+	h.Open("sbx_1", src)
+	_, wsURL := newTerminalServer(t, h)
+	raw, _, err := h.Mint("sbx_1")
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	conn := dialTerminal(t, wsURL+"?ticket="+url.QueryEscape(raw), nil)
+	if ready := readTerminal(t, conn); ready.Type != "ready" {
+		t.Fatalf("first message = %+v, want ready", ready)
+	}
+
+	// A tty input queue accepts a few bytes at a time; a bulk paste must still
+	// arrive whole.
+	src.setWriteLimit(3)
+	command := "echo this-is-a-long-command-line"
+	writeTerminal(t, conn, map[string]any{"type": "input", "data": command})
+	waitInput(t, src, command)
+}
+
+func TestServeWSInputFailureIsReported(t *testing.T) {
+	h := NewHub(nil)
+	src := newFakeSource(80, 24)
+	t.Cleanup(func() { h.Close("sbx_1") })
+	h.Open("sbx_1", src)
+	_, wsURL := newTerminalServer(t, h)
+	raw, _, err := h.Mint("sbx_1")
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	conn := dialTerminal(t, wsURL+"?ticket="+url.QueryEscape(raw), nil)
+	if ready := readTerminal(t, conn); ready.Type != "ready" {
+		t.Fatalf("first message = %+v, want ready", ready)
+	}
+
+	src.setWriteErr(errors.New("pty is gone"))
+	writeTerminal(t, conn, map[string]any{"type": "input", "data": "echo hello"})
+	msg := readTerminalUntil(t, conn, func(m wsTestMessage) bool { return m.Type == "error" })
+	if msg.Error == nil || msg.Error.Code != "input_failed" {
+		t.Fatalf("error message = %+v, want input_failed", msg)
+	}
+	if got := src.inputText(); got != "" {
+		t.Fatalf("input text = %q, want empty", got)
+	}
+
+	// A rejected write must not kill the session.
+	src.setWriteErr(nil)
+	writeTerminal(t, conn, map[string]any{"type": "input", "data": "retry"})
+	waitInput(t, src, "retry")
 }
 
 func TestServeWSBearerAuth(t *testing.T) {

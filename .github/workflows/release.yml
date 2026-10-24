@@ -69,3 +69,129 @@ jobs:
           name: slo-results
           path: slo-results.txt
           if-no-files-found: warn
+
+  # Release artifacts: the daemon for both macOS architectures and the GUI as a
+  # disk image. Nothing is uploaded unless the product and SLO gates pass.
+  artifacts:
+    name: build artifacts
+    runs-on: macos-latest
+    timeout-minutes: 45
+    needs: [product, slo]
+    permissions:
+      contents: write
+    env:
+      # Manual runs build and validate the artifacts but have no release to
+      # upload them to.
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: resolve version
+        run: |
+          version="${TAG#v}"
+          if [ -z "$version" ]; then
+            version="$(git describe --tags --always --dirty)"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "building $version"
+
+      # cgo is required: Seatbelt and Keychain go through the system
+      # frameworks, so each architecture is built against its own clang target.
+      - name: build nullkeyd (darwin/arm64 + darwin/amd64)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ldflags="-X github.com/Mrjwj34/nullkey/internal/version.Version=${VERSION} \
+            -X github.com/Mrjwj34/nullkey/internal/version.Commit=$(git rev-parse --short HEAD) \
+            -X github.com/Mrjwj34/nullkey/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for arch in arm64 amd64; do
+            case "$arch" in
+              arm64) clang_arch=arm64 ;;
+              amd64) clang_arch=x86_64 ;;
+            esac
+            out="dist/nullkeyd-darwin-${arch}"
+            mkdir -p "$out"
+            CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" \
+              CC="clang -arch ${clang_arch}" CXX="clang++ -arch ${clang_arch}" \
+              go build -trimpath -ldflags "$ldflags" -o "$out/nullkeyd" ./cmd/nullkeyd
+            file "$out/nullkeyd"
+            # Ad-hoc signature: there is no Apple Developer identity for this
+            # project, so Gatekeeper still requires the quarantine flag to be
+            # cleared by hand. The signature keeps the binary from being killed
+            # for an invalid one.
+            codesign --force --sign - --timestamp=none "$out/nullkeyd"
+            codesign --verify --verbose "$out/nullkeyd"
+            cp README.md "$out/"
+            tar -C dist -czf "dist/nullkeyd-${VERSION}-darwin-${arch}.tar.gz" "nullkeyd-darwin-${arch}"
+          done
+
+      - name: smoke test the native daemon
+        run: |
+          set -euo pipefail
+          dist/nullkeyd-darwin-arm64/nullkeyd --version
+
+      - name: build Nullkey.app
+        working-directory: apps/nullkey-gui
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build macos --release
+          codesign --force --deep --sign - \
+            build/macos/Build/Products/Release/Nullkey.app
+          codesign --verify --deep --verbose \
+            build/macos/Build/Products/Release/Nullkey.app
+
+      - name: package the disk image
+        run: |
+          set -euo pipefail
+          staging="$(mktemp -d)/Nullkey"
+          mkdir -p "$staging"
+          cp -R apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Nullkey ${VERSION}" -srcfolder "$staging" \
+            -ov -format UDZO "dist/Nullkey-${VERSION}.dmg"
+          hdiutil verify "dist/Nullkey-${VERSION}.dmg"
+
+      - name: checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          shasum -a 256 ./*.tar.gz ./*.dmg | tee SHA256SUMS.txt
+
+      - name: upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: attach artifacts to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            dist/nullkeyd-${VERSION}-darwin-arm64.tar.gz \
+            dist/nullkeyd-${VERSION}-darwin-amd64.tar.gz \
+            "dist/Nullkey-${VERSION}.dmg" \
+            dist/SHA256SUMS.txt \
+            --clobber
