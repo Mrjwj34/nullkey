@@ -180,7 +180,7 @@ make release-slo      # release-only：SLO gate（严格）
 make release-check    # 产品能力 + SLO
 ```
 
-普通 PR CI 跑 static/build/unit/acceptance/coverage/contract 与 GUI 的 analyze+test；`.github/workflows/release.yml`
+普通 PR CI 跑 static/build/unit/acceptance/coverage/contract 与 GUI 的 analyze/test/构建与启动检查；`.github/workflows/release.yml`
 在 GitHub Release 发布时额外运行产品能力断言与 SLO gate，两个 gate 通过后才构建并上传发布产物；
 这些都不作为 PR 检查项。
 

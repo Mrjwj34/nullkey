@@ -165,6 +165,9 @@ jobs:
           codesign --verify --deep --verbose \
             build/macos/Build/Products/Release/Nullkey.app
 
+      - name: smoke test GUI startup
+        run: ./scripts/gui-smoke.sh apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app
+
       - name: package the disk image
         run: |
           set -euo pipefail

@@ -75,6 +75,7 @@ NULLKEY_ACCEPTANCE_STRICT=1 go test -tags acceptance -count=1 ./test/acceptance
 | AC-API-010 | P1 | `POST /jobs/{job_id}/cancel` 仅取消可取消的安装 job；状态 `cancelling → cancelled`；重复取消返回当前状态；已成功/失败/不可取消返回 409；取消后无半安装版本。 | `TestAC_API_010_JobCancel` | ✅ |
 | AC-API-011 | P5 | `POST /oauth/flows/{flow_id}/cancel` 使 pending flow 进入 `cancelled` 并失效 state/PKCE；迟到 callback 不写凭证；已成功返回 409。 | `TestAC_API_011_OAuthCancel` | ✅ |
 | AC-API-012 | P6 | 本机缺少 harness 可执行程序时安装任务失败，不能仅凭 `installed.json` 报告已安装；GUI 按 `job_id` 获取任务并展示失败原因。 | `TestInstallHarnessMissingExecutableFails`、`TestListHarnessesAndInstalled`、GUI daemon integration | ✅ |
+| AC-API-013 | GUI | 真实应用入口在创建会调用原生桥接的 controller 前初始化 Flutter binding；没有 daemon 时打包应用保持运行，启动阶段无未处理 Dart 异常。 | `scripts/gui-smoke.sh`（PR 与 Release CI） | ✅ |
 | AC-PROD-001 | Release | Release 时黑盒验证 health/capabilities（`native`、`services_only/filtered/open`、tunnel/artifacts）、auth 错误 envelope、loopback CORS；响应不含 daemon token 或凭证前缀。 | `TestProduct_*` | ✅ |
 
 ## 3. 零凭证与 token
