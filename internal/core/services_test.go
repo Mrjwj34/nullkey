@@ -389,18 +389,36 @@ func TestSandboxServicesNative(t *testing.T) {
 	// A one-shot service may exit before the first health probe, in which case
 	// the failure path is service.error rather than service.started. The web
 	// service must always reach ready and emit its start event.
-	webStarted := false
+	webStarted, onceStarted := false, false
 	for _, ev := range evs {
 		if ev.Detail["service"] == "web" {
 			webStarted = true
+		}
+		if ev.Detail["service"] == "once" {
+			onceStarted = true
 		}
 	}
 	if !webStarted {
 		t.Fatalf("web service.started audit missing: %+v", evs)
 	}
-	exited, _, err := svc.Audit.List(ctx, 50, "", "service.exited")
-	if err != nil || len(exited) == 0 {
-		t.Fatalf("service.exited audit = %d, %v", len(exited), err)
+	if onceStarted {
+		exited, _, err := svc.Audit.List(ctx, 50, "", "service.exited")
+		if err != nil || len(exited) == 0 {
+			t.Fatalf("service.exited audit = %d, %v", len(exited), err)
+		}
+	} else {
+		// The one-shot may exit before the first health probe. In that case the
+		// supervisor must record the failure path instead of a start event.
+		errors, _, err := svc.Audit.List(ctx, 50, "", "service.error")
+		onceError := false
+		for _, ev := range errors {
+			if ev.Detail["service"] == "once" {
+				onceError = true
+			}
+		}
+		if err != nil || !onceError {
+			t.Fatalf("once service.error audit missing: %d, %v", len(errors), err)
+		}
 	}
 
 	// The terminal and generated config belong to the same sandbox.
