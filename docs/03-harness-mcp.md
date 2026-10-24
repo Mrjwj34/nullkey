@@ -33,6 +33,7 @@ check_for_update_on_startup = false
 [model_providers.nullkey]
 name = "Nullkey"
 base_url = "https://127.0.0.1:<gateway>/openai"
+model_catalog_url = "https://127.0.0.1:<gateway>/backend-api/codex/models"
 env_key = "NULLKEY_TOKEN"
 wire_api = "responses"
 requires_openai_auth = false
@@ -67,6 +68,8 @@ export CODEX_HOME="$HOME/.codex"
   不是通用 ChatGPT 代理。
 - 导入的 ChatGPT 凭证保留 access/id/refresh token 与 account id；`expires_at`
   来自 access token JWT 的 `exp`，网关在过期前刷新并保留 account id。
+- `model_catalog_url` 指向网关的 `/backend-api/codex/models`；Codex 因此使用该
+  ChatGPT 账号实际支持的模型列表，而不是内置默认模型（后者可能被后端拒绝）。
 - 不在配置文件里写真实 key；token 只从 env 读取。
 - launcher 追加 `--no-daemon`，且配置关闭 `daemon_auto_start`：Codex 不再尝试
   探测/拉起共享 app-server daemon（Seatbelt 下会被拒绝）。

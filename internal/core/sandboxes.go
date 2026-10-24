@@ -251,6 +251,7 @@ check_for_update_on_startup = false
 [model_providers.nullkey]
 name = "Nullkey"
 base_url = "` + base + `/openai"
+model_catalog_url = "` + base + `/backend-api/codex/models"
 env_key = "NULLKEY_TOKEN"
 wire_api = "responses"
 requires_openai_auth = false

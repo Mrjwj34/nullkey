@@ -246,6 +246,7 @@ func TestWriteGeneratedCodexConfig(t *testing.T) {
 	for _, want := range []string{
 		`model_provider = "nullkey"`,
 		`base_url = "https://127.0.0.1:49153/openai"`,
+		`model_catalog_url = "https://127.0.0.1:49153/backend-api/codex/models"`,
 		`chatgpt_base_url = "https://127.0.0.1:49153/backend-api"`,
 		`requires_openai_auth = false`,
 		`daemon_auto_start = false`,

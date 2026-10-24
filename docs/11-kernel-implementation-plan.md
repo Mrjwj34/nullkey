@@ -489,7 +489,8 @@ make release-slo           # release-only：SLO gate（严格）
     与插件 MCP。`/backend-api` 不是通用 ChatGPT 代理。
 12. **Codex 进程模式**：launcher 使用 `--no-daemon`，配置关闭
     `daemon_auto_start`、plugins/apps、系统代理与遥测；避免 Seatbelt 下的 daemon
-    探测和 8 秒 WebSocket 回退。
+    探测和 8 秒 WebSocket 回退。`model_catalog_url` 指向网关，使 TUI 使用账号实际
+    支持的模型，而不是内置默认模型。
 
 ## 15. 完成定义（Definition of Done）
 
