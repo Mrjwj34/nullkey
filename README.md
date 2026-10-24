@@ -4,7 +4,7 @@
 >
 > A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
-**Status:** v0.1.0 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
+**Status:** v0.1.1 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
 
 ## 为什么
 
