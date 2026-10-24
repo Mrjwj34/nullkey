@@ -308,13 +308,15 @@ WebSocket：
 { "type": "ready", "terminal_id": "term_123" }
 { "type": "output", "data": "..." }
 { "type": "exit", "code": 0 }
-{ "type": "error", "code": "token_invalid", "message": "..." }
+{ "type": "error", "error": { "code": "token_invalid", "message": "..." } }
 ```
 
 - ticket 一次性、30 秒有效；连接后校验 Origin/localhost。
 - 终端输出是 UTF-8 文本；控制序列原样透传。
 - PTY 归 daemon 管理；关闭/刷新窗口或 WebSocket 断线仅 detach，不停止进程、不撤销 token；daemon 持续读取并丢弃无人接收的输出，不能因没有连接而阻塞 harness。GUI 分开显示“连接已断开”和“沙箱已停止”。
 - 重开时重新申请 ticket，attach 到同一 `terminal_id`/PTY；不启动第二个 harness。v1 只允许一个可写连接，新连接通过验证后替换旧连接，旧连接收到 `error: terminal_replaced` 后关闭，停止自动重连并提示“终端已在另一视图打开”，避免相互抢占和重复输入。
+- 输入必须整条写进 PTY。写不完（PTY 已经关闭或持续拒绝）时发
+  `error: input_failed`，不静默丢字符；服务端保留会话，客户端重新 attach 即可继续。
 - PTY 尚未可写时，ticket 接口返回 `409 terminal_not_ready`；停止后返回 `409 conflict`。`ready` 仅在连接已绑定可写 PTY 后发送；GUI 收到它才启用输入，不能用 HTTP 201 或 WS open 代替。
 - v1 不保存服务器端历史输出；每次 attach 后客户端发送当前 resize，daemon 即使尺寸相同也触发 SIGWINCH，请求 TUI 重绘。GUI 提示“已重新连接；断线期间历史输出不可恢复”，不能宣称完整恢复 scrollback。
 - daemon 重启会丢失原 PTY 并使 token 失效；重启恢复阶段核对并停止遗留 sandbox 进程，完成后释放锁、将会话标记 stopped。GUI 在核对期间不宣称任务已停止、不允许同一 workspace 再启动；完成后提示原任务已中断，提供用已有 workspace/state 重新启动的入口。持久化会话恢复与连接恢复分开表达。

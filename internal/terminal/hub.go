@@ -191,8 +191,10 @@ func (s *Session) pump() {
 			s.mu.Lock()
 			c := s.client
 			s.mu.Unlock()
-			if c != nil && !c.trySend(serverMessage{Type: "output", Data: string(chunk)}) {
-				// Slow client: detach it without killing the PTY.
+			if c != nil && !c.sendOutput(serverMessage{Type: "output", Data: string(chunk)}) {
+				// The client is stuck, not merely busy: detach it without
+				// killing the PTY and go back to draining the output.
+				s.hub.log.Warn("terminal_client_detached", "sandbox_id", s.SandboxID, "terminal_id", s.terminalID)
 				c.close()
 				s.detach(c)
 			}
@@ -338,7 +340,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "input":
 			if msg.Data != "" {
-				_, _ = s.source.Write([]byte(msg.Data))
+				s.writeInput(c, []byte(msg.Data))
 			}
 		case "resize":
 			if msg.Cols > 0 && msg.Rows > 0 {
@@ -347,6 +349,28 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			c.trySend(serverMessage{Type: "pong"})
 		}
+	}
+}
+
+// writeInput writes the whole payload. A PTY master accepts only what fits in
+// the tty input queue, so a single Write can be short and lose the tail of a
+// bulk paste. Input that cannot be delivered is reported instead of dropped:
+// a half-written command is worse than a visible failure.
+func (s *Session) writeInput(c *client, data []byte) {
+	for len(data) > 0 {
+		n, err := s.source.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err == nil && n > 0 {
+			continue
+		}
+		s.hub.log.Warn("terminal_input_failed", "sandbox_id", s.SandboxID, "terminal_id", s.terminalID, "remaining", len(data), "error", err)
+		c.trySend(serverMessage{Type: "error", Error: &protocolError{
+			Code:    "input_failed",
+			Message: "terminal did not accept the input",
+		}})
+		return
 	}
 }
 
@@ -370,15 +394,50 @@ type serverMessage struct {
 	Error      *protocolError `json:"error,omitempty"`
 }
 
+// clientSendTimeout bounds how long the PTY pump waits for an attached client
+// to take a chunk of output. Waiting is the point: it backpressures the child
+// process the way a real terminal does, instead of losing a burst of output
+// that can never be recovered because no scrollback is kept.
+const clientSendTimeout = 10 * time.Second
+
 type client struct {
-	conn   *websocket.Conn
-	send   chan serverMessage
-	closed chan struct{}
-	once   sync.Once
+	conn        *websocket.Conn
+	send        chan serverMessage
+	closed      chan struct{}
+	once        sync.Once
+	sendTimeout time.Duration
 }
 
 func newClient(conn *websocket.Conn) *client {
-	return &client{conn: conn, send: make(chan serverMessage, 64), closed: make(chan struct{})}
+	return &client{
+		conn:        conn,
+		send:        make(chan serverMessage, 64),
+		closed:      make(chan struct{}),
+		sendTimeout: clientSendTimeout,
+	}
+}
+
+// sendOutput queues PTY output, waiting while the client catches up. It
+// reports false only when the client is closed or stays stuck for
+// sendTimeout, which is when the pump gives up on it.
+func (c *client) sendOutput(msg serverMessage) bool {
+	select {
+	case <-c.closed:
+		return false
+	case c.send <- msg:
+		return true
+	default:
+	}
+	timer := time.NewTimer(c.sendTimeout)
+	defer timer.Stop()
+	select {
+	case c.send <- msg:
+		return true
+	case <-c.closed:
+		return false
+	case <-timer.C:
+		return false
+	}
 }
 
 func (c *client) trySend(msg serverMessage) bool {
