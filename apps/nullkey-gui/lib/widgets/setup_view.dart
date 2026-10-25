@@ -378,7 +378,7 @@ class _InstallStep extends StatelessWidget {
           below ??
           (live
               ? const Text(
-                  '请先在宿主机安装 Codex CLI，再检查安装。Nullkey 会从 nullkeyd 的 PATH 查找 codex。',
+                  '请先在宿主机安装 Codex CLI，再检查安装。Nullkey 会从 PATH 和常见安装位置（~/.local/bin、/opt/homebrew/bin 等）查找 codex。',
                 )
               : null),
     );
