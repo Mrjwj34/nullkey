@@ -53,6 +53,8 @@ func newTestService(t *testing.T, mutators ...func(*Options)) (*Service, string)
 		GatewayAddr: "127.0.0.1:49153",
 		ProxyAddr:   "127.0.0.1:49154",
 		ControlAddr: "127.0.0.1:49152",
+		// Keep harness discovery hermetic; tests that need extra paths set this.
+		HarnessPathExtra: []string{},
 	}
 	for _, mutate := range mutators {
 		mutate(&opts)
@@ -610,6 +612,41 @@ func TestHarnessCommand(t *testing.T) {
 	resolved, _ := filepath.EvalSymlinks(bin)
 	if err != nil || len(cmd) != 2 || cmd[0] != resolved || cmd[1] != "--no-daemon" {
 		t.Fatalf("codex command = %v, %v", cmd, err)
+	}
+}
+
+func TestHarnessPathExtraFindsPerUserInstall(t *testing.T) {
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write bin: %v", err)
+	}
+	t.Setenv("PATH", t.TempDir()) // GUI/Finder PATH: no per-user bin
+	svc, _ := newTestService(t, func(o *Options) {
+		o.HarnessPathExtra = []string{binDir}
+	})
+	if !svc.harnessInstalled("codex") {
+		t.Fatal("codex in an extra harness path was not found")
+	}
+	cmd, _, err := svc.harnessCommand("codex")
+	resolved, _ := filepath.EvalSymlinks(bin)
+	if err != nil || len(cmd) != 2 || cmd[0] != resolved || cmd[1] != "--no-daemon" {
+		t.Fatalf("codex command = %v, %v", cmd, err)
+	}
+}
+
+func TestDefaultHarnessPathExtraIncludesUserBins(t *testing.T) {
+	dirs := defaultHarnessPathExtra("/Users/tester")
+	joined := strings.Join(dirs, string(os.PathListSeparator))
+	for _, want := range []string{
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/Users/tester/.local/bin",
+		"/Users/tester/.npm-global/bin",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("default harness path missing %q: %v", want, dirs)
+		}
 	}
 }
 

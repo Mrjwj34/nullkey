@@ -4,7 +4,7 @@
 >
 > A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
-**Status:** v0.1.2 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
+**Status:** v0.1.3 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
 
 ## 为什么
 
@@ -240,6 +240,29 @@ Codex 登录默认使用 Codex CLI 的公开 OAuth client 和
 如果 Codex CLI 自己的登录服务正在运行，GUI 会提示 1455 被占用，先完成或取消
 CLI 登录再重试。已有的宿主 ChatGPT 登录仍可直接“导入”，不需要再走浏览器。
 
+其他账号/密钥不在首次设置页：侧边栏底部 **管理 → 凭证 → 添加 API Key…**，可配置
+OpenAI、Anthropic、GitHub；MCP 服务在 **管理 → MCP**。Codex 的 ChatGPT 登录与
+provider API key 是两套凭证，互不替代。
+
+### 本地端到端联调（无需真实账号）
+
+```bash
+./scripts/e2e-codex-auth.sh
+```
+
+脚本在隔离的临时 home 和 49960–49963 端口上启动 fake 鉴权上游、`nullkeyd`、Codex
+sandbox，并使用 minimal Finder-like PATH 验证 harness 安装检查。它会证明：
+
+1. Codex 被识别为已安装（`~/.local/bin` / `/opt/homebrew/bin` 等常见位置）；
+2. fake ChatGPT OAuth credential 可配置；
+3. Codex harness sandbox 能启动并锁住 workspace；
+4. Codex 通过 gateway 调用 `GET /backend-api/codex/models` 和
+   `POST /backend-api/codex/responses`，fake 上游只接受注入的 bearer；
+5. `codex exec` 收到 `pong from fake upstream`。
+
+前置条件：Go、Python 3、`codex` 在 PATH，且宿主至少运行过一次 Codex
+（存在 `~/.codex/models_cache.json`）。脚本退出时清理全部临时进程和文件。
+
 ## 安装（发布产物）
 
 GitHub Release 附带三类产物：`nullkeyd-<version>-darwin-arm64.tar.gz`、
@@ -269,9 +292,21 @@ daemon 压缩包时才需要手动启动（不设 `NULLKEY_DAEMON_TOKEN`，让�
 ./nullkeyd-darwin-arm64/nullkeyd         # 保持这个进程运行
 ```
 
-Codex CLI 需要先在宿主机安装；在启动 daemon 的同一个终端确认 `codex --version`
-可运行，再在 GUI 点“检查安装”。当前安装接口只验证本机程序并登记适配器，不下载或
-更新 CLI；缺少可执行程序时任务失败，不会显示“已安装”。Shell 无需额外安装。
+Codex CLI 需要先在宿主机安装；GUI 会从 PATH 和常见安装位置
+（`~/.local/bin`、`~/.npm-global/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 等）
+查找它，不需要把 Finder 的 PATH 改成 shell PATH。当前安装接口只验证本机程序并登记
+适配器，不下载或更新 CLI；缺少可执行程序时任务失败，不会显示“已安装”。
+
+升级 DMG 后，如果旧 daemon 还在后台运行，先停一次再打开新版（否则会继续用旧
+daemon 的 PATH/版本）：
+
+```bash
+pkill -f '/Applications/Nullkey.app/Contents/Resources/nullkeyd'
+```
+
+这会停止正在运行的沙箱；没有活动沙箱时可直接执行。新 GUI 下次打开会自动拉起
+内置 daemon。
+
 ## License
 
 TBD。
