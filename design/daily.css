@@ -1,0 +1,20 @@
+.task-return {
+  min-height: 44px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-subtle);
+  gap: 10px;
+}
+
+.task-return small { color: var(--text-secondary); overflow-wrap: anywhere; }
+.task-return button { white-space: nowrap; }
+
+.content > .task-return {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.scenario-fold { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 12px; }
+.scenario-fold summary { width: max-content; padding: 6px 0; cursor: pointer; }
+.scenario-fold .scenario { margin-top: 6px; }

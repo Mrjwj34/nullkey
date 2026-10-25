@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Nullkey · 工作区与运行</title>
+  <link rel="stylesheet" href="v2.css?revision=5">
+  <script src="management.js?revision=3" defer></script>
+  <script src="daily.js?revision=7" defer></script>
+  <link rel="stylesheet" href="cockpit.css?revision=11">
+  <script src="cockpit.js?revision=9" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside aria-label="主导航">
+      <div class="window-drag-region" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">N</span><b>Nullkey</b></div>
+      <button class="nav-home" data-page="home">首页</button>
+      <div class="label row"><span>工作区</span><span class="sidebar-actions"><button class="icon-button" data-act="search-toggle" aria-label="搜索工作区" title="搜索工作区"></button><button class="icon-button" data-act="new" aria-label="新建工作区" title="新建工作区">+</button></span></div>
+      <label class="search-field is-collapsed"><span class="sr-only">搜索工作区</span><input id="search" aria-label="搜索工作区" placeholder="搜索工作区"></label>
+      <nav id="workspaces" aria-label="工作区"></nav>
+      <div class="label">管理</div>
+      <nav id="global" aria-label="全局管理"></nav>
+      <div class="asidebottom"><span class="status-dot" aria-hidden="true"></span>本地演示模式<small>数据仅保存在当前标签页</small></div>
+    </aside>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <footer><span>交互原型 V2 · 模拟数据，不执行命令或接收真实凭证</span><button data-act="help">交互说明</button></footer>
+  <dialog id="dialog"></dialog>
+  <div id="announce" role="status" aria-live="polite"></div>
+  <script src="v2.js?revision=9"></script>
+</body>
+</html>
