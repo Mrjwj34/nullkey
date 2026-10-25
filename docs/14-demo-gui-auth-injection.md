@@ -44,7 +44,6 @@ ls -l ~/.codex/models_cache.json
 
 - 49152、49153、49154、49960 未被占用；
 - 退出正在运行的 Nullkey GUI 和 daemon（演示使用独立临时 home）。
-
 安装 app 后如被 Gatekeeper 拦截：
 
 ```bash
