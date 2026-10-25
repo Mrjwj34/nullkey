@@ -1,7 +1,7 @@
 name: nullkey_gui
 description: Nullkey desktop GUI built with Flutter and Forui.
 publish_to: none
-version: 0.1.1+2
+version: 0.1.2+3
 
 environment:
   sdk: ^3.13.5

@@ -10,12 +10,17 @@ Nullkey 的 macOS 桌面客户端，Flutter + Forui。界面按 `docs/00-product
 1. `NULLKEY_DAEMON_URL` + `NULLKEY_DAEMON_TOKEN`（`--dart-define` 或同名环境变量）；
 2. daemon 写出的 `<NULLKEY_HOME>/daemon-token`，默认
    `~/Library/Application Support/Nullkey/daemon-token`，地址用 `http://127.0.0.1:49152`；
-3. 都没有时显示未连接，并自动等待 daemon 的 token 文件。不会隐式进入模拟模式。
+3. 都没有时先尝试启动随 `.app` 分发的 `Contents/Resources/nullkeyd`，然后等待
+   daemon 的 token 文件并自动重试。不会隐式进入模拟模式。
+
+发布包会自动启动 daemon；开发时用 `NULLKEY_DAEMON_PATH=../../bin/nullkeyd` 指定
+二进制，或按下面的“本地运行”手动启动。`NULLKEY_DISABLE_AUTOSTART=1` 关闭自动启动
+（smoke/集成测试使用）。
 
 Core Mock 引擎（`lib/services/core_mock_backend.dart`）须显式设置 `NULLKEY_DEMO=1`。
 
-规则在 `lib/services/daemon_connection.dart`。为了读 token 文件，Debug 和 Release 都不开
-app sandbox。Core Mock 按 `docs/08-api-contract.md` 的错误码、锁和任务状态机运行，
+规则在 `lib/services/daemon_connection.dart` 和 `lib/services/daemon_launcher.dart`。
+为了读 token 文件并启动子进程，Debug 和 Release 都不开 app sandbox。Core Mock 按 `docs/08-api-contract.md` 的错误码、锁和任务状态机运行，
 `main.dart` 给它加了 450 ms 的节奏，让启动阶段、安装进度和浏览器登录这些中间状态能被看到；
 侧边栏底部的“模拟数据”里可以触发断线重连、nullkeyd 重启、网络拒绝、会话数据被占用等场景，
 或回到首次使用。

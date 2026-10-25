@@ -25,6 +25,15 @@ type oauthConfig struct {
 	clientID     string
 	clientSecret string
 	scopes       []string
+	// redirectURL is sent to the provider and must match the token exchange.
+	// Empty means the control API's /oauth/callback.
+	redirectURL string
+	// callbackAddr starts a local callback listener for flows whose provider
+	// only redirects to a fixed loopback port (Codex uses localhost:1455).
+	callbackAddr string
+	// authParams are extra authorization-query parameters required by a
+	// provider. They are not secrets.
+	authParams map[string]string
 }
 
 func (c oauthConfig) available() bool {
@@ -35,6 +44,10 @@ type oauthBroker struct {
 	svc       *Service
 	mu        sync.Mutex
 	verifiers map[string]string
+
+	// callbackMu guards the optional provider-specific callback listener.
+	callbackMu sync.Mutex
+	callback   *oauthCallbackServer
 }
 
 func newOAuthBroker(s *Service) *oauthBroker {
@@ -43,14 +56,20 @@ func newOAuthBroker(s *Service) *oauthBroker {
 
 func (s *Service) oauthConfig(providerID string) oauthConfig {
 	prefix := "NULLKEY_OAUTH_" + strings.ToUpper(strings.ReplaceAll(providerID, "-", "_")) + "_"
+	clientID, clientIDSet := os.LookupEnv(prefix + "CLIENT_ID")
+	redirectURL, redirectSet := os.LookupEnv(prefix + "REDIRECT_URL")
+	callbackAddr, callbackSet := os.LookupEnv(prefix + "CALLBACK_LISTEN")
 	cfg := oauthConfig{
 		authURL:      os.Getenv(prefix + "AUTH_URL"),
 		tokenURL:     os.Getenv(prefix + "TOKEN_URL"),
-		clientID:     os.Getenv(prefix + "CLIENT_ID"),
+		clientID:     clientID,
 		clientSecret: os.Getenv(prefix + "CLIENT_SECRET"),
 		scopes:       strings.Fields(os.Getenv(prefix + "SCOPES")),
+		redirectURL:  redirectURL,
+		callbackAddr: callbackAddr,
 	}
-	if cfg.authURL == "" && cfg.tokenURL == "" {
+	builtinEndpoints := cfg.authURL == "" && cfg.tokenURL == ""
+	if builtinEndpoints {
 		switch providerID {
 		case "codex":
 			cfg.authURL = "https://auth.openai.com/oauth/authorize"
@@ -68,7 +87,30 @@ func (s *Service) oauthConfig(providerID string) oauthConfig {
 			cfg.scopes = []string{"repo", "read:user"}
 		}
 	}
+	// An explicitly empty CLIENT_ID disables the built-in Codex app. Only an
+	// unset variable gets the public Codex defaults, so custom OAuth apps and
+	// tests remain in control of redirect/listener behavior.
+	if builtinEndpoints && providerID == "codex" && !clientIDSet {
+		cfg.clientID = codexOAuthClientID
+		if !redirectSet {
+			cfg.redirectURL = codexOAuthRedirectURL
+		}
+		if !callbackSet {
+			cfg.callbackAddr = codexOAuthCallbackAddr
+		}
+		if _, scopesSet := os.LookupEnv(prefix + "SCOPES"); !scopesSet {
+			cfg.scopes = append([]string(nil), codexOAuthScopes...)
+		}
+		cfg.authParams = codexOAuthAuthParams()
+	}
 	return cfg
+}
+
+func (s *Service) oauthRedirectURL(cfg oauthConfig) string {
+	if cfg.redirectURL != "" {
+		return cfg.redirectURL
+	}
+	return s.callbackURL()
 }
 
 // StartOAuth creates a PKCE flow.
@@ -104,16 +146,26 @@ func (s *Service) StartOAuth(ctx context.Context, providerID, label string) (dom
 	s.oauth.verifiers[flow.ID] = verifier
 	s.oauth.mu.Unlock()
 
-	redirect := s.callbackURL()
+	if err := s.startOAuthCallback(flow.ID, cfg.callbackAddr); err != nil {
+		s.oauth.mu.Lock()
+		delete(s.oauth.verifiers, flow.ID)
+		s.oauth.mu.Unlock()
+		_, _ = s.Store.CancelOAuthFlow(ctx, flow.ID)
+		return domain.OAuthFlow{}, "", err
+	}
+
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.clientID)
-	q.Set("redirect_uri", redirect)
+	q.Set("redirect_uri", s.oauthRedirectURL(cfg))
 	q.Set("state", state)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
 	if len(cfg.scopes) > 0 {
 		q.Set("scope", strings.Join(cfg.scopes, " "))
+	}
+	for key, value := range cfg.authParams {
+		q.Set(key, value)
 	}
 	authURL := cfg.authURL
 	if strings.Contains(authURL, "?") {
@@ -148,6 +200,9 @@ func (s *Service) CompleteOAuth(ctx context.Context, code, state string) (domain
 		}
 		return domain.OAuthFlow{}, Wrap(http.StatusInternalServerError, "internal", "could not read OAuth flow", err)
 	}
+	// The callback listener is only needed while this flow can still receive
+	// a code. Release it on every exit, including exchange failures.
+	defer s.releaseOAuthCallback(flow.ID)
 	if s.now().After(flow.ExpiresAt) {
 		flow.Status = domain.OAuthExpired
 		_ = s.Store.UpdateOAuthFlow(ctx, flow)
@@ -163,7 +218,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, code, state string) (domain
 	if !cfg.available() {
 		return domain.OAuthFlow{}, E(http.StatusBadRequest, "oauth_unavailable", "OAuth is not configured for this provider")
 	}
-	access, refresh, expiresAt, err := s.exchangeCode(ctx, cfg, code, verifier)
+	access, refresh, idToken, expiresAt, err := s.exchangeCode(ctx, cfg, code, verifier)
 	if err != nil {
 		msg := "OAuth token exchange failed"
 		flow.Status = domain.OAuthFailed
@@ -189,7 +244,13 @@ func (s *Service) CompleteOAuth(ctx context.Context, code, state string) (domain
 	if !expiresAt.IsZero() {
 		cred.ExpiresAt = &expiresAt
 	}
-	if err := s.Secrets.Put(ctx, cred.KeychainAccount, encodeOAuthSecret(access, refresh, expiresAt)); err != nil {
+	bundle := oauthSecret{AccessToken: access, RefreshToken: refresh, IDToken: idToken, ExpiresAt: expiresAt}
+	if account := jwtAccountID(idToken); account != "" {
+		bundle.AccountID = account
+	} else {
+		bundle.AccountID = jwtAccountID(access)
+	}
+	if err := s.Secrets.Put(ctx, cred.KeychainAccount, encodeOAuthBundle(bundle)); err != nil {
 		return domain.OAuthFlow{}, Wrap(http.StatusInternalServerError, "keychain_unavailable", "could not store OAuth credential", err)
 	}
 	if err := s.Store.CreateCredential(ctx, cred); err != nil {
@@ -217,52 +278,53 @@ func (s *Service) CompleteOAuth(ctx context.Context, code, state string) (domain
 	return flow, nil
 }
 
-func (s *Service) exchangeCode(ctx context.Context, cfg oauthConfig, code, verifier string) (string, string, time.Time, error) {
+func (s *Service) exchangeCode(ctx context.Context, cfg oauthConfig, code, verifier string) (string, string, string, time.Time, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("client_id", cfg.clientID)
-	form.Set("redirect_uri", s.callbackURL())
+	form.Set("redirect_uri", s.oauthRedirectURL(cfg))
 	form.Set("code_verifier", verifier)
 	if cfg.clientSecret != "" {
 		form.Set("client_secret", cfg.clientSecret)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", "", time.Time{}, fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+		return "", "", "", time.Time{}, fmt.Errorf("token endpoint returned %d", resp.StatusCode)
 	}
 	var payload struct {
 		AccessToken      string `json:"access_token"`
 		RefreshToken     string `json:"refresh_token"`
+		IDToken          string `json:"id_token"`
 		ExpiresIn        int64  `json:"expires_in"`
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	if payload.Error != "" {
-		return "", "", time.Time{}, fmt.Errorf("token endpoint error")
+		return "", "", "", time.Time{}, fmt.Errorf("token endpoint error")
 	}
 	if payload.AccessToken == "" {
-		return "", "", time.Time{}, fmt.Errorf("token endpoint returned no access token")
+		return "", "", "", time.Time{}, fmt.Errorf("token endpoint returned no access token")
 	}
 	var expires time.Time
 	if payload.ExpiresIn > 0 {
 		expires = s.now().Add(time.Duration(payload.ExpiresIn) * time.Second)
 	}
-	return payload.AccessToken, payload.RefreshToken, expires, nil
+	return payload.AccessToken, payload.RefreshToken, payload.IDToken, expires, nil
 }
 
 // GetOAuthFlow returns flow status, expiring stale flows.
@@ -280,6 +342,7 @@ func (s *Service) GetOAuthFlow(ctx context.Context, id string) (domain.OAuthFlow
 		s.oauth.mu.Lock()
 		delete(s.oauth.verifiers, id)
 		s.oauth.mu.Unlock()
+		s.releaseOAuthCallback(id)
 	}
 	return flow, nil
 }
@@ -303,6 +366,7 @@ func (s *Service) CancelOAuthFlow(ctx context.Context, id string) (domain.OAuthF
 	s.oauth.mu.Lock()
 	delete(s.oauth.verifiers, id)
 	s.oauth.mu.Unlock()
+	s.releaseOAuthCallback(id)
 	flow.Status = domain.OAuthCancelled
 	flow.StateHash = nil
 	s.Audit.Record(ctx, "oauth.cancelled", nil, map[string]any{"flow_id": id})

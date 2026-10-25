@@ -1851,6 +1851,10 @@ const Map<String, String> _knownCoreMessages = {
   'a workspace with this root path already exists': '这个文件夹已经是一个工作区了。',
   'confirm_name must match the workspace name': '名称不一致，没有删除。',
   'delete_files is only allowed for managed workspaces': '已有文件夹不会被删除，只能从列表移除。',
+  'OAuth callback port is already in use':
+      '端口 1455 被占用。请先完成或取消 Codex CLI 的登录，再重试。',
+  'another OAuth callback listener is already active':
+      '已经有一个登录正在等待回调，请先完成或取消它。',
   'unknown provider_id': '还不支持这个服务。',
   'label is required': '请输入名称。',
   'auth_type is not supported by this provider': '这个服务不接受这种密钥。',

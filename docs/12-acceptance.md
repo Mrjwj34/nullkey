@@ -199,8 +199,12 @@ GUI CI 额外构建真实 `nullkeyd`，运行 `apps/nullkey-gui/test/daemon_inte
 安装检查失败/成功、假凭证增删、工作区创建、终端输入与断开重接、产物预览、凭证扫描、
 停止再启动保留 workspace/state、清理测试数据。无 token 时等待并自动连接由
 `daemon_backend_test.dart` 覆盖；首次未连接账号不显示“已失效”由 widget test 覆盖。
-Codex 的 API Key 与 ChatGPT 登录模式分别验证配置：只有使用 ChatGPT OAuth 时
-启用 ChatGPT 模型目录，避免 API Key 用户启动时出现无关的 401。
+Codex 的 API Key 与 ChatGPT 登录模式分别验证配置：ChatGPT OAuth 连接存在时优先
+使用该连接并启用 ChatGPT 模型目录；撤销 OAuth 后才回落到 OpenAI API key，避免
+API Key 用户启动时出现无关的 401。默认浏览器 OAuth 使用 Codex 公开 client 和
+`localhost:1455` 回调；端口只在该 flow pending 时监听，被占用时 `POST /oauth/start`
+返回 409/`oauth_unavailable`，不静默换端口。GUI 自动启动 bundled daemon 由
+`daemon_launcher_test.dart` 覆盖，发布 smoke 用 `NULLKEY_DISABLE_AUTOSTART=1`。
 
 | Gate | 必须通过 | 允许跳过 |
 |---|---|---|

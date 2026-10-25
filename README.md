@@ -4,7 +4,7 @@
 >
 > A desktop-grade secure sandbox for AI coding agents. Nullkey-managed credentials are never injected into the sandbox.
 
-**Status:** v0.1.1 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
+**Status:** v0.1.2 · Go daemon + Flutter GUI · macOS Apple Silicon · native runtime
 
 ## 为什么
 
@@ -215,29 +215,37 @@ macOS 端 Flutter + Forui 工程在 [`apps/nullkey-gui`](apps/nullkey-gui)，通
 2. daemon 自己写的 `<NULLKEY_HOME>/daemon-token`（默认
    `~/Library/Application Support/Nullkey/daemon-token`），地址取
    `http://127.0.0.1:49152`；
-3. 两者都没有时显示未连接，等待 daemon 写出 token 后自动重试；不会写入模拟数据。
+3. 两者都没有时，GUI 会尝试启动随 `.app` 分发的 `Contents/Resources/nullkeyd`，
+   然后等待 token 文件出现并自动重试；找不到内置 daemon 时不会伪造连接或写入模拟数据。
+
+发布构建把 daemon 打进 `.app` 并自动拉起；开发环境可用
+`NULLKEY_DAEMON_PATH=bin/nullkeyd` 指定二进制。`NULLKEY_DISABLE_AUTOSTART=1`
+关闭自动启动（smoke/集成测试使用）。为了读 token 文件和启动子进程，发布构建不开
+app sandbox（见 `macos/Runner/Release.entitlements`）。
 
 演示模式须显式设置 `NULLKEY_DEMO=1`（环境变量或 `--dart-define`）。
-
-也就是说：不带 `NULLKEY_DAEMON_TOKEN` 启动 daemon，让它写出 token 文件，GUI 打开即连；
-要连非默认端口或别的 token 时再显式传。为了读这个文件，发布构建不开 app sandbox
-（见 `macos/Runner/Release.entitlements`）。
 
 ```bash
 cd apps/nullkey-gui
 flutter pub get
 flutter analyze && flutter test
-flutter run -d macos                     # 自动发现本机 daemon
+flutter run -d macos                     # 自动发现或启动本机 daemon
 flutter run -d macos \
   --dart-define=NULLKEY_DAEMON_URL=http://127.0.0.1:49152 \
   --dart-define=NULLKEY_DAEMON_TOKEN=dev-token-0123456789abcdef
 ```
 
+Codex 登录默认使用 Codex CLI 的公开 OAuth client 和
+`http://localhost:1455/auth/callback` 回调；端口只在登录期间绑定，平时不占用。
+如果 Codex CLI 自己的登录服务正在运行，GUI 会提示 1455 被占用，先完成或取消
+CLI 登录再重试。已有的宿主 ChatGPT 登录仍可直接“导入”，不需要再走浏览器。
+
 ## 安装（发布产物）
 
 GitHub Release 附带三类产物：`nullkeyd-<version>-darwin-arm64.tar.gz`、
 `nullkeyd-<version>-darwin-amd64.tar.gz`、`Nullkey-<version>.dmg`，以及
-`SHA256SUMS.txt`。
+`SHA256SUMS.txt`。DMG 里已经包含 universal `nullkeyd`，GUI 首次打开会自动启动它；
+单独下载 daemon 压缩包只用于 CLI 或自定义部署。
 
 产物只做 ad-hoc 签名（没有 Apple Developer 身份，也没有公证），所以首次打开需要自己
 去掉隔离属性：
@@ -254,8 +262,8 @@ xattr -dr com.apple.quarantine /Applications/Nullkey.app
 open /Applications/Nullkey.app
 ```
 
-先启动 daemon（不设 `NULLKEY_DAEMON_TOKEN`，让它写 token 文件），再打开 GUI，
-界面就连到本机 daemon；先打开 GUI 时会等待连接。
+DMG 安装后直接打开 GUI 即可：它会启动内置 daemon 并等待 token。只有单独使用
+daemon 压缩包时才需要手动启动（不设 `NULLKEY_DAEMON_TOKEN`，让它写 token 文件）：
 
 ```bash
 ./nullkeyd-darwin-arm64/nullkeyd         # 保持这个进程运行

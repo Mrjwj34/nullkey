@@ -64,6 +64,9 @@ export CODEX_HOME="$HOME/.codex"
   access token；Codex 凭证的推理流量去
   `https://chatgpt.com/backend-api/codex/<path>`，不是 `api.openai.com`。
 - `ChatGPT-Account-Id` 由网关按导入凭证注入；沙箱自带的同名头会被删除。
+- 同时存在 OpenAI API key 与导入的 ChatGPT 登录时，Codex 的 `/openai` 路由优先
+  使用 ChatGPT OAuth（配置也继续启用 ChatGPT 模型目录）；撤销该 OAuth 连接后
+  才回落到 OpenAI API key。
 - `/backend-api/*` 只代理 Codex 需要的 allowlist（账户检查、模型目录、插件 MCP），
   不是通用 ChatGPT 代理。
 - 导入的 ChatGPT 凭证保留 access/id/refresh token 与 account id；`expires_at`
@@ -83,8 +86,17 @@ export CODEX_HOME="$HOME/.codex"
 | 方式 | v1 | 说明 |
 |---|---|---|
 | API key | ✅ | 最简单；用户填在 GUI |
-| 宿主 OAuth | ✅ Must | 宿主浏览器完成；token 存 Keychain；gateway 注入/刷新 |
+| 浏览器 OAuth（Codex） | ✅ | 默认使用 Codex CLI 的公开 client；回调 `localhost:1455` 只在登录期间绑定；token 存 Keychain |
+| 宿主 OAuth | ✅ Must | 复用宿主已有 `~/.codex/auth.json`；token 存 Keychain；gateway 注入/刷新 |
 | 沙箱内 `codex login` | ❌ | 会把 OAuth token 写进沙箱 |
+
+默认的 Codex 登录使用公开 client `app_EMoamEEZ73f0CkXaXp7hrann`，授权参数与
+Codex CLI 一致（`id_token_add_organizations`、`codex_cli_simplified_flow`、
+`originator=codex_cli_rs`，scope 含 connectors）。OpenAI 校验 redirect URI，
+所以回调必须落在 `http://localhost:1455/auth/callback`；daemon 只在有 pending flow
+时监听该端口，空闲时让给 Codex CLI。若 1455 已被 Codex CLI 的登录服务占用，
+GUI 提示先完成或取消那次 CLI 登录。需要私有 OAuth app 时用
+`NULLKEY_OAUTH_CODEX_CLIENT_ID` / `_REDIRECT_URL` / `_CALLBACK_LISTEN` 覆盖。
 
 ### MCP 配置
 

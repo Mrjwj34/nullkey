@@ -219,6 +219,7 @@ func (s *Service) Shutdown(ctx context.Context) {
 			s.Terminal.Close(sb.ID)
 		}
 	}
+	s.closeOAuthCallbacks()
 }
 
 // auditID returns a pointer suitable for domain.AuditEvent.SandboxID.

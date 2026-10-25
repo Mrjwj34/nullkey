@@ -160,10 +160,27 @@ jobs:
               build/macos/Build/Products/Release/Nullkey.app/Contents/Info.plist)
             test "$app_version" = "$VERSION"
           fi
-          codesign --force --deep --sign - \
-            build/macos/Build/Products/Release/Nullkey.app
-          codesign --verify --deep --verbose \
-            build/macos/Build/Products/Release/Nullkey.app
+
+      # The GUI starts nullkeyd on demand. Ship one universal daemon inside the
+      # app so a fresh DMG works without a separate tarball; the CLI tarballs
+      # above remain available. Sign the nested binary before the app.
+      - name: bundle nullkeyd into Nullkey.app
+        run: |
+          set -euo pipefail
+          lipo -create \
+            dist/nullkeyd-darwin-arm64/nullkeyd \
+            dist/nullkeyd-darwin-amd64/nullkeyd \
+            -output dist/nullkeyd-universal
+          file dist/nullkeyd-universal
+          app=apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app
+          mkdir -p "$app/Contents/Resources"
+          cp dist/nullkeyd-universal "$app/Contents/Resources/nullkeyd"
+          chmod 0755 "$app/Contents/Resources/nullkeyd"
+          codesign --force --sign - --timestamp=none "$app/Contents/Resources/nullkeyd"
+          codesign --verify --verbose "$app/Contents/Resources/nullkeyd"
+          "$app/Contents/Resources/nullkeyd" --version
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --verbose "$app"
 
       - name: smoke test GUI startup
         run: ./scripts/gui-smoke.sh apps/nullkey-gui/build/macos/Build/Products/Release/Nullkey.app
