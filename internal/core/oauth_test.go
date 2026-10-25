@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,6 +27,145 @@ func setOAuthEnv(t *testing.T, provider, authURL, tokenURL, clientID, clientSecr
 	t.Setenv(prefix+"CLIENT_ID", clientID)
 	t.Setenv(prefix+"CLIENT_SECRET", clientSecret)
 	t.Setenv(prefix+"SCOPES", scopes)
+}
+
+// unsetOAuthEnv restores the "not configured" state; t.Setenv cannot unset.
+func unsetOAuthEnv(t *testing.T, provider string) {
+	t.Helper()
+	prefix := "NULLKEY_OAUTH_" + strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_"
+	for _, suffix := range []string{
+		"AUTH_URL", "TOKEN_URL", "CLIENT_ID", "CLIENT_SECRET", "SCOPES",
+		"REDIRECT_URL", "CALLBACK_LISTEN",
+	} {
+		key := prefix + suffix
+		old, ok := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+		t.Cleanup(func() {
+			if ok {
+				_ = os.Setenv(key, old)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}
+
+func freeLoopbackPort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split port: %v", err)
+	}
+	return port
+}
+
+func TestCodexOAuthDefaults(t *testing.T) {
+	unsetOAuthEnv(t, "codex")
+	svc, _ := newTestService(t)
+	cfg := svc.oauthConfig("codex")
+	if !cfg.available() {
+		t.Fatalf("codex OAuth should be available by default: %+v", cfg)
+	}
+	if cfg.clientID != codexOAuthClientID || cfg.redirectURL != codexOAuthRedirectURL || cfg.callbackAddr != codexOAuthCallbackAddr {
+		t.Fatalf("codex defaults = %+v", cfg)
+	}
+	if cfg.authParams["originator"] != "codex_cli_rs" || cfg.authParams["codex_cli_simplified_flow"] != "true" {
+		t.Fatalf("codex auth params = %+v", cfg.authParams)
+	}
+	joined := strings.Join(cfg.scopes, " ")
+	if !strings.Contains(joined, "api.connectors.invoke") {
+		t.Fatalf("codex scopes = %v", cfg.scopes)
+	}
+	providers := svc.OAuthProviders()
+	if len(providers) == 0 || providers[0].ID != "codex" || providers[0].Status != "available" {
+		t.Fatalf("providers = %+v", providers)
+	}
+}
+
+func TestCodexOAuthCallbackListener(t *testing.T) {
+	svc, _ := newTestService(t)
+	t.Cleanup(svc.closeOAuthCallbacks)
+	ctx := context.Background()
+	server := tokenServer(t, "access-token", "refresh-token", 3600)
+	defer server.Close()
+
+	port := freeLoopbackPort(t)
+	setOAuthEnv(t, "codex", "https://auth.example.test/authorize", server.URL, "client-id", "client-secret", "openid")
+	redirect := fmt.Sprintf("http://127.0.0.1:%s/auth/callback", port)
+	t.Setenv("NULLKEY_OAUTH_CODEX_REDIRECT_URL", redirect)
+	t.Setenv("NULLKEY_OAUTH_CODEX_CALLBACK_LISTEN", "127.0.0.1:"+port)
+
+	flow, authURL, err := svc.StartOAuth(ctx, "codex", "listener")
+	if err != nil {
+		t.Fatalf("start with callback listener: %v", err)
+	}
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("parse auth url: %v", err)
+	}
+	if got := parsed.Query().Get("redirect_uri"); got != redirect {
+		t.Fatalf("redirect_uri = %q, want %q", got, redirect)
+	}
+	state := parsed.Query().Get("state")
+	if state == "" {
+		t.Fatal("state missing")
+	}
+
+	// A wrong state is rejected without writing a credential.
+	resp, err := http.Get(redirect + "?code=the-code&state=wrong")
+	if err != nil {
+		t.Fatalf("bad callback: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad callback status = %d", resp.StatusCode)
+	}
+	if creds, _, err := svc.ListCredentials(ctx, 50, ""); err != nil || len(creds) != 0 {
+		t.Fatalf("bad callback wrote credentials: %d, %v", len(creds), err)
+	}
+
+	resp, err = http.Get(redirect + "?code=the-code&state=" + url.QueryEscape(state))
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	body := make([]byte, 512)
+	n, _ := resp.Body.Read(body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body[:n]), "登录完成") {
+		t.Fatalf("callback = %d %q", resp.StatusCode, string(body[:n]))
+	}
+	stored, err := svc.GetOAuthFlow(ctx, flow.ID)
+	if err != nil || stored.Status != domain.OAuthSucceeded {
+		t.Fatalf("flow = %+v, %v", stored, err)
+	}
+	if creds, _, err := svc.ListCredentials(ctx, 50, ""); err != nil || len(creds) != 1 {
+		t.Fatalf("credentials = %d, %v", len(creds), err)
+	}
+}
+
+func TestCodexOAuthCallbackPortInUse(t *testing.T) {
+	svc, _ := newTestService(t)
+	t.Cleanup(svc.closeOAuthCallbacks)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	setOAuthEnv(t, "codex", "https://auth.example.test/authorize", "https://auth.example.test/token", "client-id", "secret", "openid")
+	t.Setenv("NULLKEY_OAUTH_CODEX_REDIRECT_URL", "http://127.0.0.1:"+port+"/auth/callback")
+	t.Setenv("NULLKEY_OAUTH_CODEX_CALLBACK_LISTEN", "127.0.0.1:"+port)
+
+	_, _, err = svc.StartOAuth(context.Background(), "codex", "busy")
+	wantError(t, err, http.StatusConflict, "oauth_unavailable")
 }
 
 // startTestFlow configures a provider and starts an OAuth flow, returning the
@@ -367,6 +508,43 @@ func TestCompleteOAuthSuccess(t *testing.T) {
 	evs, _, err := svc.Audit.List(ctx, 50, "", "oauth.succeeded")
 	if err != nil || len(evs) != 1 {
 		t.Fatalf("audit = %d, %v", len(evs), err)
+	}
+}
+
+func TestCompleteOAuthStoresIDTokenAccount(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	idToken := testJWT(t, time.Now().Add(time.Hour).Unix(), "acct-oauth")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "access-token",
+			"refresh_token": "refresh-token",
+			"id_token":      idToken,
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+	setOAuthEnv(t, "codex", "https://auth.example.test/authorize", server.URL, "client-id", "client-secret", "openid")
+	_, state := startTestFlow(t, svc, "codex", server.URL)
+	completed, err := svc.CompleteOAuth(ctx, "the-code", state)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	cred, err := svc.Store.GetCredential(ctx, *completed.CredentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := svc.Secrets.Get(ctx, cred.KeychainAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, ok := decodeOAuthSecret(raw)
+	if !ok {
+		t.Fatalf("stored secret is not an OAuth bundle: %q", raw)
+	}
+	if bundle.IDToken != idToken || bundle.AccountID != "acct-oauth" {
+		t.Fatalf("bundle = id_token %q account %q", bundle.IDToken, bundle.AccountID)
 	}
 }
 

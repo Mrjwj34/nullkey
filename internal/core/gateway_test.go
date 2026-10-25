@@ -234,6 +234,44 @@ func TestModelGatewayCodexFallback(t *testing.T) {
 	}
 }
 
+func TestModelGatewayPrefersCodexChatGPTLogin(t *testing.T) {
+	var auth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	codexCred := createCred(t, svc, CreateCredentialRequest{
+		ProviderID: "codex", Label: "oauth", AuthType: "oauth", Value: "codex-token", BaseURL: upstream.URL,
+	})
+	// A later OpenAI API key must not take over the Codex sandbox's /openai
+	// route while the imported ChatGPT login is still connected.
+	createCred(t, svc, CreateCredentialRequest{
+		ProviderID: "openai", Label: "key", AuthType: "api_key", Value: "sk-test-api-key", BaseURL: upstream.URL,
+	})
+	send := func() {
+		t.Helper()
+		if err := svc.ModelGateway(ctx, domain.Sandbox{ID: "sbx"}, "openai", httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "http://gateway/openai/responses", nil)); err != nil {
+			t.Fatalf("model gateway: %v", err)
+		}
+	}
+	send()
+	if auth != "Bearer codex-token" {
+		t.Fatalf("authorization = %q, want the ChatGPT login", auth)
+	}
+	if err := svc.DeleteCredential(ctx, codexCred.ID); err != nil {
+		t.Fatalf("delete ChatGPT login: %v", err)
+	}
+	send()
+	if auth != "Bearer sk-test-api-key" {
+		t.Fatalf("authorization = %q, want the API key after revoking OAuth", auth)
+	}
+}
+
 func TestModelGatewayErrors(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()

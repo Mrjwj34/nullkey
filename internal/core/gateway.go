@@ -135,9 +135,18 @@ func (s *Service) ModelGateway(ctx context.Context, sb domain.Sandbox, providerI
 	return nil
 }
 
-// modelCredential picks the best host credential for a model route. An OpenAI
-// route may fall back to an imported Codex ChatGPT login.
+// modelCredential picks the best host credential for a model route. Codex
+// sandboxes call the /openai route, so an imported ChatGPT login must win over
+// a plain OpenAI API key: both the rendered Codex config and the upstream
+// traffic then use the same account (and ChatGPT model catalog). Revoking the
+// ChatGPT login is how a user switches back to the API key.
 func (s *Service) modelCredential(ctx context.Context, providerID string) (domain.Credential, error) {
+	if providerID == "openai" {
+		if cred, err := s.Store.RefreshableCredentialForProvider(ctx, "codex"); err == nil {
+			_ = s.Store.TouchCredential(ctx, cred.ID)
+			return cred, nil
+		}
+	}
 	candidates := []string{providerID}
 	if providerID == "openai" {
 		candidates = append(candidates, "codex")

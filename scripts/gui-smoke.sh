@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Start the packaged GUI without a daemon and catch bootstrap errors that
-# widget tests hide by initializing Flutter's binding before the entry point.
+# Start the packaged GUI without a daemon (autostart disabled) and catch
+# bootstrap errors that widget tests hide by initializing Flutter's binding
+# before the entry point.
 set -euo pipefail
 
 app="${1:?usage: gui-smoke.sh /path/to/Nullkey.app}"
@@ -18,6 +19,7 @@ mkdir -p "$work/home"
 
 NULLKEY_HOME="$work/home" NULLKEY_DAEMON_TOKEN="" \
   NULLKEY_DAEMON_URL="http://127.0.0.1:1" NULLKEY_DEMO=0 \
+  NULLKEY_DISABLE_AUTOSTART=1 \
   "$app/Contents/MacOS/Nullkey" > "$work/startup.log" 2>&1 &
 pid=$!
 

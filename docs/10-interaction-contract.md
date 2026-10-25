@@ -52,11 +52,16 @@
 
 - 宿主已有 `auth_mode=chatgpt` 登录时，导入后 GUI 的 `expires_at` 非空，来源是
   access token JWT 的 `exp`；refresh/id token 与 account id 由宿主保存，不展示。
+- 首次连接也可以直接用“用 ChatGPT 登录”：daemon 使用 Codex 公开 client，注册的
+  回调固定为 `http://localhost:1455/auth/callback`，只在登录期间监听；1455 被
+  Codex CLI 登录占用时明确提示，不静默换端口。
 - 沙箱内 Codex 无需再次登录：`~/.codex/config.toml` 由 daemon 渲染，只引用
   `NULLKEY_TOKEN` 和本地 gateway；用户不应看到 `codex login`。
 - Codex 使用 `https://127.0.0.1:<gateway>/openai`，并由 `CODEX_CA_CERTIFICATE`
   信任 Nullkey 本地 CA；CA 不进入系统钥匙串/信任库。
 - 网关按导入的 account id 注入 `ChatGPT-Account-Id`；沙箱无法切换账号。
+- 同时有 OpenAI API key 和 ChatGPT 登录时，Codex 优先使用 ChatGPT 登录；只有
+  撤销该登录后才使用 API key。
 - Codex 的插件/应用与共享 daemon 在 v1 沙箱内默认关闭；终端启动不再等待
   app-server 探测或 WebSocket 回退。
 - 凭证过期前 gateway 自动刷新；刷新失败时返回 `reauth_required`，不把旧 token

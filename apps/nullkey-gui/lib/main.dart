@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:forui/forui.dart';
@@ -6,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'services/core_mock_backend.dart';
 import 'services/daemon_backend.dart';
 import 'services/daemon_connection.dart';
+import 'services/daemon_launcher.dart';
 import 'services/nullkey_backend.dart';
 import 'state/nullkey_studio_controller.dart';
 import 'theme/theme.dart';
@@ -14,6 +16,27 @@ import 'widgets/app_shell.dart';
 void main() {
   // The controller queries native authentication before runApp builds the UI.
   WidgetsFlutterBinding.ensureInitialized();
+  if (_setting('NULLKEY_DEMO', const String.fromEnvironment('NULLKEY_DEMO')) !=
+      '1') {
+    // The GUI waits for the token file and reconnects on its own, so launching
+    // the daemon does not block the first frame.
+    final launchEnvironment = Map<String, String>.of(Platform.environment);
+    final definedToken = _setting(
+      'NULLKEY_DAEMON_TOKEN',
+      const String.fromEnvironment('NULLKEY_DAEMON_TOKEN'),
+    );
+    final definedUrl = _setting(
+      'NULLKEY_DAEMON_URL',
+      const String.fromEnvironment('NULLKEY_DAEMON_URL'),
+    );
+    if (definedToken != null) {
+      launchEnvironment['NULLKEY_DAEMON_TOKEN'] = definedToken;
+    }
+    if (definedUrl != null) {
+      launchEnvironment['NULLKEY_DAEMON_URL'] = definedUrl;
+    }
+    unawaited(DaemonLauncher(environment: launchEnvironment).ensureRunning());
+  }
   runApp(NullkeyApp(controller: NullkeyStudioController(api: _backend())));
 }
 
@@ -22,21 +45,16 @@ void main() {
 /// daemon wrote to `<NULLKEY_HOME>/daemon-token`. A missing token keeps the
 /// app disconnected until the daemon starts. Demos must be selected explicitly.
 NullkeyBackend _backend() {
-  String? setting(String name, String defined) {
-    final value = defined.isNotEmpty ? defined : Platform.environment[name];
-    return value == null || value.trim().isEmpty ? null : value.trim();
-  }
-
-  if (setting('NULLKEY_DEMO', const String.fromEnvironment('NULLKEY_DEMO')) ==
+  if (_setting('NULLKEY_DEMO', const String.fromEnvironment('NULLKEY_DEMO')) ==
       '1') {
     return CoreMockBackend(simulatedLatency: const Duration(milliseconds: 450));
   }
-  final explicitToken = setting(
+  final explicitToken = _setting(
     'NULLKEY_DAEMON_TOKEN',
     const String.fromEnvironment('NULLKEY_DAEMON_TOKEN'),
   );
   final connection = resolveDaemonConnection(
-    url: setting(
+    url: _setting(
       'NULLKEY_DAEMON_URL',
       const String.fromEnvironment('NULLKEY_DAEMON_URL'),
     ),
@@ -48,6 +66,13 @@ NullkeyBackend _backend() {
     token: connection?.token ?? '',
     tokenLoader: explicitToken == null ? readDaemonToken : null,
   );
+}
+
+/// A `--dart-define` wins over the process environment. Empty values mean
+/// "not set".
+String? _setting(String name, String defined) {
+  final value = defined.isNotEmpty ? defined : Platform.environment[name];
+  return value == null || value.trim().isEmpty ? null : value.trim();
 }
 
 class NullkeyApp extends StatefulWidget {

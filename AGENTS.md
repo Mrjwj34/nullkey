@@ -232,9 +232,11 @@ NULLKEY_SECRET_BACKEND=file \
 - gateway：模型（OpenAI/Anthropic/Codex）、MCP（JSON-RPC/SSE/tool allowlist）、GitHub smart HTTP；流式转发。
 - gateway TLS：同一 loopback 端口 mux 明文 HTTP 与本地 CA 签发的 HTTPS；CA 只通过
   `CODEX_CA_CERTIFICATE` 提供给沙箱，不装系统信任库。
-- Codex ChatGPT：导入保留 access/id/refresh token + account id，JWT `exp` 作为
-  `expires_at`，过期前刷新；网关按凭证注入 `ChatGPT-Account-Id` 并剥离沙箱同名头；
-  推理路由到 `chatgpt.com/backend-api/codex`；`/backend-api/*` 仅 allowlist。
+- Codex ChatGPT：默认用 Codex CLI 公开 OAuth client 发起浏览器登录，回调
+  `localhost:1455` 只在登录期间监听；导入保留 access/id/refresh token + account id，
+  JWT `exp` 作为 `expires_at`，过期前刷新；网关按凭证注入 `ChatGPT-Account-Id` 并
+  剥离沙箱同名头；推理路由到 `chatgpt.com/backend-api/codex`；`/backend-api/*`
+  仅 allowlist。同时存在 OpenAI API key 与 ChatGPT 登录时优先用后者。
 - 沙箱 Codex 配置由 daemon 渲染：HTTPS provider、`--no-daemon`、
   `daemon_auto_start=false`、关闭 plugins/apps/system proxy/telemetry；并且
   `approval_policy="never"`、`sandbox_mode="danger-full-access"`、workspace
@@ -250,8 +252,9 @@ NULLKEY_SECRET_BACKEND=file \
 - artifacts：只读列表/预览/diff，canonicalize + symlink 防逃逸，1MiB 截断。
 - audit/SSE/redaction、scan（仅 generated_runtime）、SLO 基线。
 - GUI：`apps/nullkey-gui`（Flutter + Forui）按 OpenAPI 对接 daemon，连接来源为
-  dart-define/环境变量 → `<NULLKEY_HOME>/daemon-token`；缺少 daemon 时等待并重试，
-  Core Mock 仅在显式设置 `NULLKEY_DEMO=1` 时启用。
+  dart-define/环境变量 → `<NULLKEY_HOME>/daemon-token`；发布包内置 universal
+  `nullkeyd`，GUI 探活失败时 detached 启动它并等待 token，`NULLKEY_DISABLE_AUTOSTART=1`
+  可关闭；Core Mock 仅在显式设置 `NULLKEY_DEMO=1` 时启用。
 
 未实现/明确不做：
 

@@ -317,9 +317,16 @@ func TestCodexCatalogMatchesSelectedCredential(t *testing.T) {
 		}
 	}
 	check(true)
+	// A plain OpenAI API key must not silently replace the imported ChatGPT
+	// login for Codex: both the catalog and the gateway keep using OAuth.
 	if _, err := svc.CreateCredential(ctx, CreateCredentialRequest{
 		ProviderID: "openai", Label: "API key", AuthType: "api_key", Value: "sk-test-fake",
 	}); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	// Revoking the ChatGPT login is the explicit switch back to the API key.
+	if err := svc.DeleteCredential(ctx, cred.ID); err != nil {
 		t.Fatal(err)
 	}
 	check(false)

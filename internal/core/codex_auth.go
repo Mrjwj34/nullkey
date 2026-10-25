@@ -7,10 +7,29 @@ import (
 	"time"
 )
 
-// codexOAuthClientID is the public OAuth client used by the Codex CLI. It is
-// not a secret; keeping it here lets host imports refresh tokens without
-// requiring the operator to configure a private OAuth app.
-const codexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+// The Codex CLI's OAuth client is public (it ships in an open-source client).
+// Using it lets Nullkey refresh host imports and broker a fresh ChatGPT login
+// without asking the operator to register a private OAuth app. The redirect and
+// extra parameters match the Codex CLI login flow; OpenAI validates the
+// redirect URI, so the local callback listener must use port 1455.
+const (
+	codexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexOAuthRedirectURL  = "http://localhost:1455/auth/callback"
+	codexOAuthCallbackAddr = "localhost:1455"
+)
+
+var codexOAuthScopes = []string{
+	"openid", "profile", "email", "offline_access",
+	"api.connectors.read", "api.connectors.invoke",
+}
+
+func codexOAuthAuthParams() map[string]string {
+	return map[string]string{
+		"id_token_add_organizations": "true",
+		"codex_cli_simplified_flow":  "true",
+		"originator":                 "codex_cli_rs",
+	}
+}
 
 const codexAccountClaim = "https://api.openai.com/auth"
 
