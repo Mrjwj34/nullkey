@@ -18,6 +18,7 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/nullkey-e2e.XXXXXX")"
 DAEMON_PID=""
 FAKE_PID=""
 SANDBOX_ID=""
+KEEP="${KEEP:-0}"
 
 cleanup() {
   if [ -n "$SANDBOX_ID" ]; then
@@ -58,7 +59,8 @@ echo "==> build local binaries"
 (cd "$ROOT" && go build -o "$WORK/e2e-terminal" ./scripts/e2e-terminal)
 
 echo "==> start fake authenticated upstream on 127.0.0.1:$FAKE_PORT"
-python3 "$ROOT/scripts/e2e-fake-model.py" --port "$FAKE_PORT" --log "$WORK/fake.log" &
+python3 "$ROOT/scripts/e2e-fake-model.py" --port "$FAKE_PORT" --log "$WORK/fake.log" \
+  >"$WORK/fake.stdout.log" 2>&1 &
 FAKE_PID=$!
 
 echo "==> start isolated nullkeyd (minimal Finder-like PATH)"
@@ -194,9 +196,46 @@ grep -q "POST /backend-api/codex/responses auth=Bearer $CRED_TOKEN" "$WORK/fake.
 }
 
 echo
+echo "--- fake upstream saw the injected credential ---"
+grep -E 'GET /backend-api/codex/models|POST /backend-api/codex/responses' "$WORK/fake.log" || true
+echo "--- codex exec output ---"
+python3 - "$WORK/terminal.out" <<'PY'
+import json
+import re
+import sys
+
+text = ""
+for line in open(sys.argv[1]):
+    try:
+        message = json.loads(line)
+    except Exception:
+        continue
+    if message.get("type") == "output":
+        text += message.get("data", "")
+text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text).replace("\r", "")
+print(text[-1200:])
+PY
+
+echo
 echo "PASS"
 echo "  harness login: fake ChatGPT OAuth credential"
 echo "  workspace:     $WS_ID"
 echo "  codex start:   authenticated GET /backend-api/codex/models"
 echo "  codex exec:    authenticated POST /backend-api/codex/responses"
 echo "  response:      pong from fake upstream"
+
+if [ "$KEEP" = "1" ]; then
+  trap - EXIT
+  echo
+  echo "KEEP=1: leaving the demo environment running."
+  echo "  work dir:     $WORK"
+  echo "  fake log:     tail -f $WORK/fake.log"
+  echo "  daemon pid:   $DAEMON_PID (ports $CONTROL_PORT/$GATEWAY_PORT/$PROXY_PORT)"
+  echo "  fake pid:     $FAKE_PID"
+  echo "  sandbox:      $SANDBOX_ID"
+  echo "  token:        $TOKEN"
+  echo
+  echo "stop it with:"
+  echo "  curl -s -X POST -H 'Authorization: Bearer $TOKEN' http://127.0.0.1:$CONTROL_PORT/api/v1/sandboxes/$SANDBOX_ID/stop"
+  echo "  kill $DAEMON_PID $FAKE_PID; rm -rf $WORK"
+fi

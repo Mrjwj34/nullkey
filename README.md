@@ -149,6 +149,7 @@ token 不进入 sandbox
 - [11 · Kernel 实施计划（Go）](docs/11-kernel-implementation-plan.md)
 - [12 · 验收断言](docs/12-acceptance.md)
 - [13 · 宿主 CLI / 沙箱服务 / Terraform（v1.1）](docs/13-host-tools-and-services.md)
+- [14 · GUI 演示：gateway 凭证注入](docs/14-demo-gui-auth-injection.md)
 - [SLO](slo.md)
 
 ## 三天 MVP
