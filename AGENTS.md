@@ -245,6 +245,10 @@ NULLKEY_SECRET_BACKEND=file \
 - Seatbelt profile 对 workspace/state/cache 的各级父目录放 `file-read-metadata`
   （`literal`，不是 `subpath`）：解析绝对路径会 lstat 每一段，缺了就连
   `CODEX_HOME` 都 canonicalize 不了。
+- harness 发现：先查 daemon PATH，再查 `/opt/homebrew/bin`、`/usr/local/bin`、
+  `~/.local/bin`、`~/.npm-global/bin`、`~/.bun/bin`、`~/.volta/bin`、`~/.asdf/shims`
+  等常见位置；GUI 从 Finder 启动时不会有登录 shell PATH。宿主 home 内的安装由
+  Seatbelt profile 单独放通 harness package。
 - OAuth：PKCE、callback、取消/迟到回调互斥、refresh、宿主导入。
 - egress：CONNECT/HTTP、三档模式、allowlist、SSRF 拒绝、拒绝审计。
 - services：manifest 依赖拓扑、端口范围、健康检查、重启、停止顺序、生成 token。

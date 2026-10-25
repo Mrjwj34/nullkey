@@ -101,7 +101,7 @@ func (s *Service) runInstall(ctx context.Context, jobID, harnessID, version stri
 
 	if !s.harnessInstalled(harnessID) {
 		_ = os.RemoveAll(staging)
-		msg := "harness executable is unavailable; install it on the host and ensure it is on nullkeyd's PATH"
+		msg := "harness executable is unavailable; install it on the host (Nullkey searches PATH, ~/.local/bin, /opt/homebrew/bin, and similar locations)"
 		update(domain.JobFailed, 0, msg, &msg)
 		return
 	}

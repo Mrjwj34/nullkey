@@ -981,7 +981,7 @@ class DaemonBackend implements NullkeyBackend {
       error: error == null
           ? null
           : error.startsWith('harness executable is unavailable')
-          ? '请先在宿主机安装 Agent，并让 nullkeyd 的 PATH 能找到它，再重新检查。'
+          ? '请先在宿主机安装 Agent，再重新检查。Nullkey 会从 PATH 和常见安装位置（~/.local/bin、/opt/homebrew/bin 等）查找。'
           : '没能完成安装（$error）',
       createdAt: createdAt,
       updatedAt: DateTime.now().toUtc(),
@@ -1869,7 +1869,7 @@ const Map<String, String> _knownCoreMessages = {
   'sandbox is not running': '沙箱已停止。',
   'harness is not installed': 'Agent 还没有安装。',
   'harness binary is not available':
-      '这台 Mac 上找不到 Agent 的程序。安装后再启动，Nullkey 会在 PATH 中查找它。',
+      '这台 Mac 上找不到 Agent 的程序。安装后再启动，Nullkey 会从 PATH 和常见安装位置查找它。',
   'native runtime is not available on this host': '这台 Mac 不能运行沙箱。',
   'state harness_id does not match harness_id': '这份会话数据属于另一个 Agent。',
   'network_mode must be services_only, filtered, or open': '不支持这种网络设置。',

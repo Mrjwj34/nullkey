@@ -20,6 +20,9 @@
 - 宿主侧下载固定版本（npm 包或官方二进制），记录版本 + SHA-256。
 - 缓存到 `~/Library/Application Support/Nullkey/cache/harnesses/codex/<version>/`。
 - 沙箱内通过只读路径/`PATH` 使用；不随安装包分发。
+- daemon 从自身 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`、
+  `~/.npm-global/bin` 等常见位置发现宿主安装。GUI 从 Finder 启动时没有登录 shell
+  的 PATH，不能要求用户为 GUI 单独配置 PATH。
 
 ### 模型配置
 

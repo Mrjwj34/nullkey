@@ -74,6 +74,10 @@ type Options struct {
 	ControlAddr   string
 	// HostImportRoot overrides the directory scanned for importable host logins.
 	HostImportRoot string
+	// HarnessPathExtra lists directories searched for harness executables in
+	// addition to PATH. Nil uses common per-user install locations; tests set
+	// an empty slice to keep PATH lookups hermetic.
+	HarnessPathExtra []string
 	// GatewayClient is used by model/git/OAuth HTTP calls. Tests may inject it.
 	GatewayClient *http.Client
 	// Now is injectable for tests.
@@ -100,6 +104,8 @@ type Service struct {
 	HostImportDir string
 	HTTP          *http.Client
 	now           func() time.Time
+
+	harnessPathExtra []string
 
 	jobsMu sync.Mutex
 	jobs   map[string]context.CancelFunc
@@ -145,31 +151,37 @@ func New(opts Options) (*Service, error) {
 			},
 		}
 	}
+	hostHome, _ := os.UserHomeDir()
 	hostImport := opts.HostImportRoot
 	if hostImport == "" {
-		hostImport, _ = os.UserHomeDir()
+		hostImport = hostHome
+	}
+	harnessPathExtra := opts.HarnessPathExtra
+	if harnessPathExtra == nil {
+		harnessPathExtra = defaultHarnessPathExtra(hostHome)
 	}
 	s := &Service{
-		Home:          opts.Home,
-		Store:         opts.Store,
-		Secrets:       opts.Secrets,
-		Runtime:       opts.Runtime,
-		Terminal:      opts.Terminal,
-		Events:        opts.Events,
-		Audit:         opts.Audit,
-		Artifacts:     opts.Artifacts,
-		MCP:           opts.MCP,
-		Log:           opts.Logger,
-		GatewayAddr:   opts.GatewayAddr,
-		GatewayTLSURL: opts.GatewayTLSURL,
-		GatewayCAPath: opts.GatewayCAPath,
-		ProxyAddr:     opts.ProxyAddr,
-		ControlAddr:   opts.ControlAddr,
-		HostImportDir: hostImport,
-		HTTP:          opts.GatewayClient,
-		now:           opts.Now,
-		jobs:          make(map[string]context.CancelFunc),
-		services:      make(map[string]*serviceSupervisor),
+		Home:             opts.Home,
+		Store:            opts.Store,
+		Secrets:          opts.Secrets,
+		Runtime:          opts.Runtime,
+		Terminal:         opts.Terminal,
+		Events:           opts.Events,
+		Audit:            opts.Audit,
+		Artifacts:        opts.Artifacts,
+		MCP:              opts.MCP,
+		Log:              opts.Logger,
+		GatewayAddr:      opts.GatewayAddr,
+		GatewayTLSURL:    opts.GatewayTLSURL,
+		GatewayCAPath:    opts.GatewayCAPath,
+		ProxyAddr:        opts.ProxyAddr,
+		ControlAddr:      opts.ControlAddr,
+		HostImportDir:    hostImport,
+		HTTP:             opts.GatewayClient,
+		now:              opts.Now,
+		harnessPathExtra: harnessPathExtra,
+		jobs:             make(map[string]context.CancelFunc),
+		services:         make(map[string]*serviceSupervisor),
 	}
 	s.oauth = newOAuthBroker(s)
 	s.tunnel = newTunnelServer(s)
@@ -331,7 +343,7 @@ func (s *Service) harnessInstalled(id string) bool {
 	if id == "shell" {
 		return true
 	}
-	_, err := lookPathOutsideHome(id)
+	_, err := s.lookPathForHarness(id)
 	return err == nil
 }
 
@@ -343,7 +355,7 @@ func (s *Service) harnessCommand(id string) ([]string, string, error) {
 	if !s.harnessInstalled(id) {
 		return nil, "", E(http.StatusConflict, "harness_not_installed", "harness is not installed")
 	}
-	path, err := lookPathOutsideHome(id)
+	path, err := s.lookPathForHarness(id)
 	if err != nil {
 		return nil, "", E(http.StatusConflict, "harness_not_installed", "harness binary is not available")
 	}
@@ -361,24 +373,64 @@ func (s *Service) harnessCommand(id string) ([]string, string, error) {
 	return []string{path}, root, nil
 }
 
-// lookPathOutsideHome prefers a PATH entry that is not under the host home.
-// Seatbelt denies the host home; using a visible install avoids broadening the
-// profile and also avoids accidentally selecting a stale per-user shim.
-func lookPathOutsideHome(id string) (string, error) {
+// lookPathForHarness searches PATH, then common per-user install directories.
+// The GUI starts nullkeyd from Finder, whose PATH does not include ~/.local/bin
+// or ~/.npm-global/bin, so an installed Codex would otherwise look missing.
+// Host-home installs are safe: the Seatbelt profile re-allows the resolved
+// harness package and its path ancestors.
+func (s *Service) lookPathForHarness(id string) (string, error) {
 	hostHome, _ := os.UserHomeDir()
+	var outside, inside []string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			continue
 		}
-		candidate := filepath.Join(dir, id)
-		if hostHome != "" && (candidate == hostHome || strings.HasPrefix(candidate, hostHome+string(filepath.Separator))) {
+		if underHostHome(dir, hostHome) {
+			inside = append(inside, dir)
+		} else {
+			outside = append(outside, dir)
+		}
+	}
+	dirs := append([]string{}, outside...)
+	dirs = append(dirs, s.harnessPathExtra...)
+	dirs = append(dirs, inside...)
+	seen := make(map[string]bool, len(dirs))
+	for _, dir := range dirs {
+		if dir == "" || seen[dir] {
 			continue
 		}
+		seen[dir] = true
+		candidate := filepath.Join(dir, id)
 		if resolved, err := exec.LookPath(candidate); err == nil {
 			return resolved, nil
 		}
 	}
 	return exec.LookPath(id)
+}
+
+func underHostHome(path, hostHome string) bool {
+	if hostHome == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	return clean == hostHome || strings.HasPrefix(clean, hostHome+string(filepath.Separator))
+}
+
+// defaultHarnessPathExtra covers the install locations used by Homebrew and
+// the common Node package managers without executing a login shell.
+func defaultHarnessPathExtra(hostHome string) []string {
+	dirs := []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	if hostHome == "" {
+		return dirs
+	}
+	return append(dirs,
+		filepath.Join(hostHome, ".local", "bin"),
+		filepath.Join(hostHome, "Library", "pnpm"),
+		filepath.Join(hostHome, ".npm-global", "bin"),
+		filepath.Join(hostHome, ".bun", "bin"),
+		filepath.Join(hostHome, ".volta", "bin"),
+		filepath.Join(hostHome, ".asdf", "shims"),
+	)
 }
 
 // harnessRoot returns the package directory a harness needs at runtime. For

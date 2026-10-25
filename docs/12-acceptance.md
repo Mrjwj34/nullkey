@@ -205,6 +205,10 @@ API Key 用户启动时出现无关的 401。默认浏览器 OAuth 使用 Codex 
 `localhost:1455` 回调；端口只在该 flow pending 时监听，被占用时 `POST /oauth/start`
 返回 409/`oauth_unavailable`，不静默换端口。GUI 自动启动 bundled daemon 由
 `daemon_launcher_test.dart` 覆盖，发布 smoke 用 `NULLKEY_DISABLE_AUTOSTART=1`。
+本地可复现链路用 `./scripts/e2e-codex-auth.sh`：隔离端口/home、minimal Finder-like
+PATH，fake 鉴权上游只接受 gateway 注入的 bearer，覆盖 harness 发现、Codex sandbox
+启动、`GET /backend-api/codex/models` 与 `POST /backend-api/codex/responses`、
+`codex exec` 收到 fake 响应。
 
 | Gate | 必须通过 | 允许跳过 |
 |---|---|---|
