@@ -5,7 +5,7 @@ export const Root = () => (
   <Composition
     id="NullkeyHook"
     component={NullkeyHook}
-    durationInFrames={690}
+    durationInFrames={1500}
     fps={30}
     width={1920}
     height={1080}
